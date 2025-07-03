@@ -48,7 +48,7 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/shieldeye.git
+   git clone https://github.com/exiv703/shieldeye.git
    cd shieldeye
    ```
 2. **Install dependencies:**
