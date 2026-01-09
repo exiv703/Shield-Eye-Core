@@ -1,0 +1,14 @@
+# Development dependencies for ShieldEye
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+
+# Code quality
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.0
+
+# Type stubs
+types-requests>=2.31.0

@@ -1,11 +1,25 @@
-python-nmap==0.7.1
-requests==2.31.0
-beautifulsoup4==4.12.2
-reportlab==4.0.4
-lxml==4.9.3
-tkinter
-threading
-socket
-subprocess
-json
-datetime 
+# Core scanning dependencies
+python-nmap
+requests
+beautifulsoup4
+html5lib
+
+# Reporting and PDF generation
+reportlab
+
+# Network and security
+dnspython
+pyOpenSSL
+cryptography
+
+# Async support
+aiohttp
+
+# Additional utilities
+python-dateutil
+packaging
+
+# Note: The following are installed system-wide on Arch Linux:
+# - Pillow (python-pillow) - for image processing
+# - lxml (python-lxml) - for XML/HTML parsing
+# Make sure virtualenv is created with --system-site-packages flag
