@@ -13,7 +13,7 @@ class DashboardView(Gtk.ScrolledWindow):
     def __init__(self, backend):
         super().__init__()
         self.backend = backend
-        self.use_demo_data = True  # Set to True for screenshots
+        self.use_demo_data = False  # Set to True for screenshots
         
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         

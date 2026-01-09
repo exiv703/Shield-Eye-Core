@@ -1,0 +1,19 @@
+#!/bin/bash
+# Virtual Environment Setup Example
+# Copy this file to 'venv' and customize paths as needed
+
+# Example: Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# For development (optional)
+pip install -r requirements-dev.txt
+
+echo "Virtual environment setup complete!"
+echo "To activate: source venv/bin/activate"
