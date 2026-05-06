@@ -62,3 +62,6 @@ scan_history.json
 *.bak
 *.backup
 .cache/
+
+# Runtime data (SQLite history, temp DBs)
+backend/data/

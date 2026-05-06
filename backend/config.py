@@ -60,10 +60,13 @@ ASYNC_CONFIG = {
 TIMEOUT_CONFIG = {
     'dns_lookup': 5,
     'ssl_handshake': 10,
+    'web_vuln': 10,
     'http_request': 10,
     'socket_connect': 5,
     'banner_grab': 3,
     'port_scan': 5,
+    'cms_scan': 15,
+    'api_request': 30,
     'network_scan': 300,
     'cve_api': 20,
     'shodan_api': 10

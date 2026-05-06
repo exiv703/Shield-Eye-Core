@@ -4,15 +4,26 @@ import random
 import time
 from collections import defaultdict
 from ipaddress import ip_address, ip_network, AddressValueError
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests
 
 from .config import SECURITY_CONFIG, ALERT_CONFIG, PORT_SCAN_CONFIG, TIMEOUT_CONFIG
+from .http_client import safe_request
 from .port_scanner import PortScanner
 from .cms_scanner import CMSScanner
+from .history_store import HistoryStore
 from .report_generator import ReportGenerator
+from backend.cache import TTLCache
+from backend.web_checks import (
+    TRAVERSAL_PAYLOADS,
+    analyze_sqli_responses,
+    analyze_traversal_response,
+    analyze_xss_response,
+)
+from backend.validators import validate_scan_url
 from .exceptions import (
     SecurityPolicyError,
     InvalidTargetError,
@@ -21,6 +32,50 @@ from .exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def validate_api_key(api_key: str, min_length: int = 32) -> None:
+    """Validate Shodan API key format.
+
+    Args:
+        api_key: Key string to validate.
+        min_length: Minimum expected length.
+
+    Raises:
+        ValidationError: If key is empty or too short.
+    """
+    if not api_key or len(api_key.strip()) < min_length:
+        raise ValidationError(f"Invalid API key: must be at least {min_length} characters")
+
+
+def redact_secret(value: str, visible_chars: int = 4) -> str:
+    """Mask secret value for logging.
+
+    Args:
+        value: Secret string.
+        visible_chars: Number of chars to show at start.
+
+    Returns:
+        Masked string, e.g. ``abcd****************``.
+    """
+    if not value:
+        return ""
+    if len(value) <= visible_chars:
+        return "*" * len(value)
+    return value[:visible_chars] + "*" * (len(value) - visible_chars)
+
+
+def apply_scan_jitter(base_delay: float, jitter: float = 0.2) -> float:
+    """Apply randomized jitter to base delay for rate limiting.
+
+    Args:
+        base_delay: Base delay in seconds.
+        jitter: Max random offset (±jitter seconds).
+
+    Returns:
+        Actual delay to sleep (base_delay ± jitter).
+    """
+    return base_delay + random.uniform(-jitter, jitter)
 
 class ShieldEyeBackend:
     def __init__(
@@ -46,12 +101,26 @@ class ShieldEyeBackend:
         self.whitelist = sec_config.get("whitelist_ips", [])
         self.blacklist = sec_config.get("blacklist_ips", [])
         self.require_authorization = sec_config.get("require_authorization", False)
+        self.allow_private_targets = bool(sec_config.get("allow_private_targets", False))
         self.alert_enabled = alert_cfg.get("enabled", True)
         self.alert_score_threshold = alert_cfg.get("score_threshold", 70)
         self.alert_min_level = alert_cfg.get("min_level", "HIGH").upper()
         
         self._target_request_times: Dict[str, List[float]] = defaultdict(list)
         self._target_request_counts: Dict[str, int] = defaultdict(int)
+
+        self.history_store = HistoryStore()
+        self.cache = TTLCache(default_ttl=3600)
+        legacy_path = Path(__file__).parent / "data" / "scan_history.json"
+        if legacy_path.exists():
+            imported = self.history_store.import_json_legacy(str(legacy_path))
+            if imported > 0:
+                logger.info("Imported %s entries from legacy JSON history", imported)
+                archive_path = legacy_path.with_suffix(".json.imported")
+                try:
+                    legacy_path.replace(archive_path)
+                except OSError as exc:
+                    logger.warning("Failed to archive legacy history file: %s", exc)
 
     def _sleep_rate_limit(self):
         if self.rate_limit > 0:
@@ -144,6 +213,15 @@ class ShieldEyeBackend:
                     raise ValidationError(f"Hostname too long: {target}")
     
     def _ensure_target_allowed(self, target: str):
+        if "/" not in target:
+            try:
+                validate_scan_url(
+                    f"http://{target.strip()}",
+                    allow_private=self.allow_private_targets,
+                )
+            except ValidationError as exc:
+                raise SecurityPolicyError(str(exc)) from exc
+
         try:
             if "/" in target:
                 network = ip_network(target, strict=False)
@@ -166,18 +244,7 @@ class ShieldEyeBackend:
                     raise SecurityPolicyError("Target is not in allowed ranges")
 
     def _validate_url(self, url: str):
-        if not url:
-            raise ValidationError('URL cannot be empty')
-        
-        url = url.strip()
-        parsed = urlparse(url)
-        
-        if not parsed.scheme:
-            raise ValidationError(f'URL missing scheme (http/https): {url}')
-        if parsed.scheme not in ('http', 'https'):
-            raise ValidationError(f"URL scheme must be http or https, got: {parsed.scheme}")
-        if not parsed.netloc:
-            raise ValidationError(f"URL missing domain: {url}")
+        validate_scan_url(url, allow_private=self.allow_private_targets)
 
     def scan_ports(
         self,
@@ -189,6 +256,27 @@ class ShieldEyeBackend:
         port_mode: str = "common",
         custom_ports: Optional[List[int]] = None,
     ) -> List[Dict]:
+        """Run a port scan for a single host or a CIDR network.
+
+        This method validates target input, enforces policy/rate limits, selects
+        the effective port list, and orchestrates host or network scanning.
+
+        Args:
+            target: Target IP, hostname, or CIDR network.
+            scan_type: Scan scope, either ``single`` or ``network``.
+            stealth: Legacy flag controlling rate-limited scan behavior.
+            scan_mode: Scanner profile, either ``safe`` or ``aggressive``.
+            shodan_api_key: Optional API key for host enrichment.
+            port_mode: Port selection mode (common, critical, full_1k, full_64k, custom).
+            custom_ports: Optional custom port list when ``port_mode=custom``.
+
+        Returns:
+            A list of per-host scan result dictionaries.
+
+        Raises:
+            ValidationError: If target, scan mode, or port inputs are invalid.
+            SecurityPolicyError: If target violates security policy or rate limits.
+        """
         self._validate_target(target)
         self._ensure_target_allowed(target)
         
@@ -201,10 +289,11 @@ class ShieldEyeBackend:
         self._sleep_rate_limit()
         self._check_per_target_rate_limit(target)
         ports = self._select_ports(port_mode, custom_ports)
+        rate_limited = stealth
         if scan_type == "single":
-            results = [self._scan_single_host_stealth(target, stealth, scan_mode, ports)]
+            results = [self._scan_single_host_rate_limited(target, rate_limited, scan_mode, ports)]
         else:
-            results = self._scan_network_stealth(target, stealth, scan_mode, ports)
+            results = self._scan_network_rate_limited(target, rate_limited, scan_mode, ports)
         if shodan_api_key:
             for host_result in results:
                 ip_value = host_result.get("target")
@@ -239,40 +328,69 @@ class ShieldEyeBackend:
         else:
             return list(PORT_SCAN_CONFIG.get("common_ports", []))
 
-    def _scan_single_host_stealth(self, target, stealth, scan_mode, ports=None):
+    def _scan_single_host_rate_limited(self, target, rate_limited, scan_mode, ports=None):
         scanner = self.port_scanner
         if ports is None and scan_mode == "aggressive":
             ports = list(scanner.common_ports.keys()) + [i for i in range(1, 1024) if i not in scanner.common_ports]
         
-        if stealth:
+        if rate_limited:
             if ports is None:
                 ports = list(scanner.common_ports.keys())
             random.shuffle(ports)  # randomize order
         
         result = scanner.scan_single_host(target, ports=ports, scan_mode=scan_mode)
         
-        if stealth or scan_mode == "safe":
-            time.sleep(random.uniform(0.5, 2.0))  # delay to avoid detection
+        if rate_limited or scan_mode == "safe":
+            delay = apply_scan_jitter(base_delay=1.0, jitter=0.3)
+            time.sleep(max(0, delay))  # rate limiting to reduce load and avoid triggering IDS
         return result
 
-    def _scan_network_stealth(self, network, stealth, scan_mode, ports=None):
+    def _scan_network_rate_limited(self, network, rate_limited, scan_mode, ports=None):
         scanner = self.port_scanner
         if ports is None and scan_mode == "aggressive":
             ports = list(scanner.common_ports.keys()) + [i for i in range(1, 1024) if i not in scanner.common_ports]
         
-        if stealth:
+        if rate_limited:
             if ports is None:
                 ports = list(scanner.common_ports.keys())
             random.shuffle(ports)
         
         results = scanner.scan_network(network, ports=ports, scan_mode=scan_mode)
         
-        if stealth or scan_mode == "safe":
+        if rate_limited or scan_mode == "safe":
             for _ in range(len(results)):
-                time.sleep(random.uniform(0.5, 2.0))  # delay between hosts
+                delay = apply_scan_jitter(base_delay=1.0, jitter=0.3)
+                time.sleep(max(0, delay))  # rate limiting between hosts to reduce target load
         return results
 
-    def scan_cms(self, url, stealth=False, scan_mode="safe", web_vulns=False):
+    _scan_single_host_stealth = _scan_single_host_rate_limited
+    _scan_network_stealth = _scan_network_rate_limited
+
+    def scan_cms(
+        self,
+        url: str,
+        stealth: bool = False,
+        scan_mode: str = "safe",
+        web_vulns: bool = False,
+    ) -> Dict:
+        """Scan a web target for CMS and optional heuristic web vulnerabilities.
+
+        The method validates URL safety, applies rate limiting, runs CMS
+        fingerprinting, and can append lightweight XSS/SQLi/path traversal checks.
+
+        Args:
+            url: Target URL to analyze.
+            stealth: Legacy flag controlling rate-limited request behavior.
+            scan_mode: Scan profile to tag in output.
+            web_vulns: Whether to run heuristic web vulnerability checks.
+
+        Returns:
+            A CMS scan result dictionary with scan metadata.
+
+        Raises:
+            ValidationError: If URL validation fails.
+            SecurityPolicyError: If per-target security throttling is exceeded.
+        """
         self._validate_url(url)
         parsed = urlparse(url)
         target = parsed.netloc
@@ -281,11 +399,13 @@ class ShieldEyeBackend:
         self._check_per_target_rate_limit(target)
         
         scanner = self.cms_scanner
+        rate_limited = stealth
         
-        if stealth:
+        if rate_limited:
             from .config import STEALTH_USER_AGENTS
             scanner.session.headers["User-Agent"] = random.choice(STEALTH_USER_AGENTS)
-            time.sleep(random.uniform(0.5, 2.0))
+            delay = apply_scan_jitter(base_delay=1.0, jitter=0.3)
+            time.sleep(max(0, delay))
         
         result = scanner.scan_cms(url)
         
@@ -296,9 +416,29 @@ class ShieldEyeBackend:
         result["stealth"] = stealth
         return result
 
-    def summarize_risk(self, port_results, cms_results):
+    def summarize_risk(self, port_results: List[Dict], cms_results: List[Dict]) -> Dict[str, Any]:
+        """Summarize risk using weighted findings with explainable scoring details.
+
+        The summary combines open-port exposure and CMS findings into a single
+        weighted score and maps it to a qualitative level. In addition to legacy
+        reason strings, it returns a machine-readable breakdown and deduplicated
+        remediation recommendations for downstream UI/CLI presentation.
+
+        Args:
+            port_results: Port scan result list produced by ``scan_ports``.
+            cms_results: CMS scan result list produced by ``scan_cms``.
+
+        Returns:
+            A dictionary containing score, level, reasons, breakdown,
+            recommendations, and aggregate metrics.
+
+        Raises:
+            ValueError: If score inputs cannot be interpreted numerically.
+        """
         score = 0
         reasons = []
+        breakdown: List[Dict[str, Any]] = []
+        recommendations: List[str] = []
         
         severity_weights = {
             "CRITICAL": 40,
@@ -308,6 +448,12 @@ class ShieldEyeBackend:
         }
         
         critical_ports = {22, 23, 3389, 5900}
+        critical_port_labels = {
+            22: "SSH exposed",
+            23: "Telnet exposed",
+            3389: "RDP exposed",
+            5900: "VNC exposed",
+        }
         total_open_ports = 0
         critical_open_ports = 0
         for host in port_results:
@@ -316,9 +462,35 @@ class ShieldEyeBackend:
                 port = port_info.get("port")
                 if port in critical_ports:
                     critical_open_ports += 1
-                    score += 20
+                    weight = 20
+                    score += weight
+                    remediation = f"Firewall port {port}"
+                    breakdown.append(
+                        {
+                            "factor": "critical_port_exposed",
+                            "port": port,
+                            "weight": weight,
+                            "description": critical_port_labels.get(int(port), "Critical management port exposed"),
+                            "remediation": remediation,
+                        }
+                    )
+                    recommendations.append(remediation)
                 else:
-                    score += 5
+                    weight = 5
+                    score += weight
+                    service = port_info.get("service")
+                    service_desc = f" ({service})" if service else ""
+                    remediation = f"Review necessity of port {port} exposure"
+                    breakdown.append(
+                        {
+                            "factor": "open_port_exposed",
+                            "port": port,
+                            "weight": weight,
+                            "description": f"Open port {port}{service_desc}",
+                            "remediation": remediation,
+                        }
+                    )
+                    recommendations.append(remediation)
         if critical_open_ports:
             reasons.append(f"{critical_open_ports} critical management ports exposed (SSH/Telnet/RDP/VNC)")
         elif total_open_ports:
@@ -327,14 +499,48 @@ class ShieldEyeBackend:
         total_cms_vulns = 0
         total_cms_issues = 0
         for cms in cms_results:
+            cms_name = str(cms.get("cms", "")).strip() or str(cms.get("name", "")).strip()
+            if not cms_name:
+                cms_detected = cms.get("cms_detected", {})
+                if isinstance(cms_detected, dict):
+                    cms_name = str(cms_detected.get("cms", "")).strip()
+            cms_name = cms_name or "CMS"
+
             for vuln in cms.get("vulnerabilities", []):
                 total_cms_vulns += 1
                 sev = str(vuln.get("severity", "MEDIUM")).upper()
-                score += severity_weights.get(sev, 5)
+                weight = severity_weights.get(sev, 5)
+                score += weight
+                cve = vuln.get("cve") or vuln.get("id")
+                remediation = str(vuln.get("remediation", "")).strip() or f"Update {cms_name}"
+                description = str(vuln.get("description", "")).strip() or f"{sev.title()} vulnerability in {cms_name}"
+                item: Dict[str, Any] = {
+                    "factor": "cms_vulnerability",
+                    "weight": weight,
+                    "description": description,
+                    "remediation": remediation,
+                }
+                if cve:
+                    item["cve"] = cve
+                breakdown.append(item)
+                recommendations.append(remediation)
+
             for issue in cms.get("security_issues", []):
                 total_cms_issues += 1
                 sev = str(issue.get("severity", "MEDIUM")).upper()
-                score += severity_weights.get(sev, 5)
+                weight = severity_weights.get(sev, 5)
+                score += weight
+                remediation = str(issue.get("remediation", "")).strip() or f"Harden {cms_name} security configuration"
+                description = str(issue.get("description", "")).strip() or f"{sev.title()} CMS security misconfiguration"
+                breakdown.append(
+                    {
+                        "factor": "cms_security_issue",
+                        "weight": weight,
+                        "description": description,
+                        "remediation": remediation,
+                    }
+                )
+                recommendations.append(remediation)
         if total_cms_vulns:
             reasons.append(f"{total_cms_vulns} known CMS vulnerabilities")
         if total_cms_issues:
@@ -348,10 +554,18 @@ class ShieldEyeBackend:
             level = "HIGH"
         else:
             level = "CRITICAL"
+
+        deduped_recommendations: List[str] = []
+        for recommendation in recommendations:
+            if recommendation and recommendation not in deduped_recommendations:
+                deduped_recommendations.append(recommendation)
+
         return {
             "score": score,
             "level": level,
             "reasons": reasons,
+            "breakdown": breakdown,
+            "recommendations": deduped_recommendations,
             "metrics": {
                 "total_open_ports": total_open_ports,
                 "critical_open_ports": critical_open_ports,
@@ -367,40 +581,48 @@ class ShieldEyeBackend:
         # XSS check
         xss_payload = "<script>alert(1)</script>"
         try:
-            resp = requests.get(url, params={"xss": xss_payload}, timeout=5)
-            if resp.ok and xss_payload in resp.text:
-                vulns.append({
-                    "type": "XSS",
-                    "description": "Reflected XSS detected via ?xss=... (heuristic check)",
-                })
+            resp = safe_request("GET", url, params={"xss": xss_payload}, timeout_key="web_vuln")
+            if resp.ok:
+                finding = analyze_xss_response(resp.text, xss_payload)
+                if finding:
+                    vulns.append(finding)
         except requests.RequestException:
             pass  # ignore errors
         
         # SQL injection check
-        sqli_payload = "' OR '1'='1"
         try:
-            resp = requests.get(url, params={"id": sqli_payload}, timeout=5)
-            if resp.ok:
-                body_lower = resp.text.lower()
-                if "sql" in body_lower or "syntax" in body_lower:
-                    vulns.append({
-                        "type": "SQLi",
-                        "description": "Possible SQL Injection via ?id=... (error-based heuristic)",
-                    })
+            base_resp = safe_request("GET", url, params={"id": "1"}, timeout_key="web_vuln")
+            true_resp = safe_request("GET", url, params={"id": "1' AND 1=1--"}, timeout_key="web_vuln")
+            false_resp = safe_request("GET", url, params={"id": "1' AND 1=2--"}, timeout_key="web_vuln")
+            error_resp = safe_request("GET", url, params={"id": "'"}, timeout_key="web_vuln")
+
+            finding = analyze_sqli_responses(
+                base_resp.text,
+                true_resp.text,
+                false_resp.text,
+                error_text=error_resp.text if error_resp else None,
+                base_time=base_resp.elapsed.total_seconds(),
+                false_time=false_resp.elapsed.total_seconds(),
+            )
+            if finding:
+                vulns.append(finding)
         except requests.RequestException:
             pass
         
         # directory traversal
-        dt_payload = "../../../../etc/passwd"
-        try:
-            resp = requests.get(url, params={"file": dt_payload}, timeout=5)
-            if resp.ok and "root:x:" in resp.text:
-                vulns.append({
-                    "type": "Directory Traversal",
-                    "description": "Possible directory traversal via ?file=... (Linux /etc/passwd pattern)",
-                })
-        except requests.RequestException:
-            pass
+        for payload in TRAVERSAL_PAYLOADS:
+            try:
+                resp = safe_request("GET", url, params={"file": payload}, timeout_key="web_vuln")
+                if not resp.ok:
+                    continue
+
+                finding = analyze_traversal_response(resp.text)
+                payload_reflected = payload.lower() in resp.text.lower()
+                if finding and payload_reflected:
+                    vulns.append(finding)
+                    break
+            except requests.RequestException:
+                continue
         
         return vulns
 
@@ -416,6 +638,29 @@ class ShieldEyeBackend:
         port_mode: str = "common",
         custom_ports: Optional[List[int]] = None,
     ) -> Dict:
+        """Run an end-to-end scan and return a consolidated result payload.
+
+        This orchestration method performs port scanning first, then optional CMS
+        scanning, computes risk summary, and evaluates alert triggering criteria.
+
+        Args:
+            target: Target IP, hostname, or CIDR network.
+            scan_type: Scan scope, either ``single`` or ``network``.
+            url: Optional web URL for CMS/vulnerability scanning.
+            scan_mode: Scanner profile, either ``safe`` or ``aggressive``.
+            stealth: Legacy flag controlling rate-limited behavior.
+            web_vulns: Whether to include heuristic web vulnerability checks.
+            shodan_api_key: Optional key for Shodan host enrichment.
+            port_mode: Port selection mode.
+            custom_ports: Optional custom port list when ``port_mode=custom``.
+
+        Returns:
+            A dictionary combining port results, CMS results, risk summary, and alert metadata.
+
+        Raises:
+            ValidationError: If target or scan parameters are invalid.
+            SecurityPolicyError: If target violates configured scan policy.
+        """
 
         port_results = self.scan_ports(
             target=target,
@@ -462,6 +707,7 @@ class ShieldEyeBackend:
         return self.report_generator.generate_vulnerability_report(port_results, cms_results, output_filename)
 
     def save_scan_to_history(self, port_results: List[Dict], cms_results: List[Dict], history_file: str = "scan_history.json", metadata: Optional[Dict] = None) -> None:
+        _ = history_file
         entry = {
             "date": time.strftime("%Y-%m-%d %H:%M:%S"),
             "port_results": port_results,
@@ -473,37 +719,38 @@ class ShieldEyeBackend:
             entry["config"] = metadata.get("config", {})
             if "risk_summary" in metadata:
                 entry["risk_summary"] = metadata["risk_summary"]
-        
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        except FileNotFoundError:
-            history = []
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse history file, starting fresh")
-            history = []
-        except OSError as e:
-            logger.error(f"Failed to read history file: {e}")
-            history = []
-        
-        history.append(entry)
-        with open(history_file, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
+        if "timestamp" not in entry:
+            entry["timestamp"] = entry["date"]
+        if "target" not in entry:
+            entry["target"] = "Unknown"
 
-    def load_history(self, history_file: str = "scan_history.json") -> List[Dict]:
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return []
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse history file, returning empty")
-            return []
-        except OSError:
-            return []
+        self.history_store.save_entry(
+            {
+                "timestamp": entry["timestamp"],
+                "target": entry["target"],
+                "result": entry,
+            }
+        )
+
+    def load_history(self, history_file: str = "scan_history.json", limit: Optional[int] = None) -> List[Dict]:
+        _ = history_file
+        entries = self.history_store.load_entries(limit=limit)
+        history: List[Dict] = []
+        for item in entries:
+            result = item.get("result", {})
+            if isinstance(result, dict):
+                entry = dict(result)
+            else:
+                entry = {}
+            entry.setdefault("timestamp", item.get("timestamp"))
+            entry.setdefault("target", item.get("target", "Unknown"))
+            entry.setdefault("date", entry.get("timestamp", time.strftime("%Y-%m-%d %H:%M:%S")))
+            history.append(entry)
+        return history
     
-    def summarize_history(self, history_file: str = "scan_history.json") -> Dict:
-        history = self.load_history(history_file=history_file)
+    def summarize_history(self, history_file: str = "scan_history.json", limit: int = 10) -> Dict:
+        _ = history_file
+        history = self.load_history(limit=limit)
         total_scans = len(history)
         if total_scans == 0:
             return {
@@ -571,13 +818,30 @@ class ShieldEyeBackend:
         }
 
     def get_shodan_info(self, ip_value: str, api_key: str) -> Dict:
+        """Fetch and cache host metadata from Shodan API.
+
+        Args:
+            ip_value: Target IP address string.
+            api_key: Shodan API key.
+
+        Returns:
+            A dictionary of Shodan host attributes, or an ``error`` payload when
+            validation/request fails.
+
+        Raises:
+            Exception: Unexpected errors from JSON parsing or cache internals.
+        """
+        cached = self.cache.get("shodan", ttl=86400, ip=ip_value)
+        if cached is not None:
+            return cached
+
         try:
-            timeout = TIMEOUT_CONFIG.get('shodan_api', 10)
-            url = f"https://api.shodan.io/shodan/host/{ip_value}?key={api_key}"
-            resp = requests.get(url, timeout=timeout)
+            validate_api_key(api_key)
+            url = f"https://api.shodan.io/shodan/host/{ip_value}"
+            resp = safe_request("GET", url, params={"key": api_key}, timeout_key="api_request")
             if resp.status_code == 200:
                 data = resp.json()
-                return {
+                result = {
                     "country": data.get("country_name"),
                     "city": data.get("city"),
                     "org": data.get("org"),
@@ -586,16 +850,23 @@ class ShieldEyeBackend:
                     "hostnames": data.get("hostnames"),
                     "data": [d.get("data") for d in data.get("data", []) if "data" in d],
                 }
+                self.cache.set("shodan", result, ttl=86400, ip=ip_value)
+                return result
             return {"error": f"HTTP {resp.status_code}"}
+        except ValidationError:
+            logger.error("Shodan query failed for %s: invalid API key", redact_secret(ip_value))
+            return {"error": "Invalid API key"}
         except requests.RequestException as e:
-            logger.error(f"Shodan query failed: {e}")
-            return {"error": str(e)}
+            error_message = str(e)
+            if api_key:
+                error_message = error_message.replace(api_key, redact_secret(api_key))
+            logger.error("Shodan query failed for %s: %s", redact_secret(ip_value), error_message)
+            return {"error": "API request failed"}
 
     def update_cve_database(self, output_file: str = "cve_db.json") -> int:
         url = "https://cve.circl.lu/api/last"
         try:
-            timeout = TIMEOUT_CONFIG.get('cve_api', 20)
-            resp = requests.get(url, timeout=timeout)
+            resp = safe_request("GET", url, timeout_key="api_request")
             if resp.status_code != 200:
                 raise RuntimeError(f"Failed to update CVE database: HTTP {resp.status_code}")
             cve_data = resp.json()

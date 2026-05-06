@@ -6,6 +6,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .cache import TTLCache
 from .exceptions import CVEFetchError
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ class CVEClient:
     def __init__(self, base_url="https://cve.circl.lu/api", session=None):
         self.base_url = base_url.rstrip("/")
         self.session = session or self._create_session_with_retry()
-        self._cache = {}  # cache CVE lookups
+        self.cache = TTLCache(default_ttl=3600)
         self._last_request_time = 0.0
         self._min_request_interval = 0.5  # rate limiting
     
@@ -45,11 +46,19 @@ class CVEClient:
         self._last_request_time = time.time()
 
     def _fetch_vendor_product(self, vendor, product):
-        key = (vendor.lower(), product.lower())
+        vendor_key = str(vendor).lower().strip()
+        product_key = str(product).lower().strip()
         # check cache first
-        if key in self._cache:
+        cached = self.cache.get(
+            "cve_search",
+            ttl=21600,
+            vendor=vendor_key,
+            product=product_key,
+            base_url=self.base_url,
+        )
+        if cached is not None:
             logger.debug("CVE cache hit for %s/%s", vendor, product)
-            return self._cache[key]
+            return cached
 
         self._rate_limit()
         
@@ -66,25 +75,90 @@ class CVEClient:
             
             if resp.status_code != 200:
                 logger.warning("CIRCL CVE search failed for %s/%s with HTTP %s", vendor, product, resp.status_code)
-                self._cache[key] = []
+                self.cache.set(
+                    "cve_search",
+                    [],
+                    ttl=21600,
+                    vendor=vendor_key,
+                    product=product_key,
+                    base_url=self.base_url,
+                )
                 return []
             
             data = resp.json()
+            cached_result = []
             if isinstance(data, list):
-                self._cache[key] = data
+                cached_result = data
             else:
-                self._cache[key] = data.get("results", []) if isinstance(data, dict) else []
+                cached_result = data.get("results", []) if isinstance(data, dict) else []
+
+            self.cache.set(
+                "cve_search",
+                cached_result,
+                ttl=21600,
+                vendor=vendor_key,
+                product=product_key,
+                base_url=self.base_url,
+            )
             
-            logger.info("Cached %d CVEs for %s/%s", len(self._cache[key]), vendor, product)
-            return self._cache[key]
+            logger.info("Cached %d CVEs for %s/%s", len(cached_result), vendor, product)
+            return cached_result
             
         except requests.Timeout as exc:
             logger.error("CIRCL CVE search timeout for %s/%s: %s", vendor, product, exc)
-            self._cache[key] = []
+            self.cache.set(
+                "cve_search",
+                [],
+                ttl=21600,
+                vendor=vendor_key,
+                product=product_key,
+                base_url=self.base_url,
+            )
             return []
         except requests.RequestException as exc:
             logger.error("CIRCL CVE search error for %s/%s: %s", vendor, product, exc)
-            self._cache[key] = []
+            self.cache.set(
+                "cve_search",
+                [],
+                ttl=21600,
+                vendor=vendor_key,
+                product=product_key,
+                base_url=self.base_url,
+            )
+            return []
+
+    def get_latest_cves(self) -> List[Dict]:
+        cached = self.cache.get("cve_latest", ttl=3600, base_url=self.base_url)
+        if cached is not None:
+            return cached
+
+        self._rate_limit()
+        url = f"{self.base_url}/last"
+        try:
+            logger.info("Fetching latest CVEs from CIRCL API")
+            resp = self.session.get(url, timeout=20)
+
+            if resp.status_code == 429:
+                logger.warning("Rate limited by CIRCL API, waiting 5s")
+                time.sleep(5)
+                resp = self.session.get(url, timeout=20)
+
+            if resp.status_code != 200:
+                logger.warning("CIRCL latest CVE fetch failed with HTTP %s", resp.status_code)
+                self.cache.set("cve_latest", [], ttl=3600, base_url=self.base_url)
+                return []
+
+            data = resp.json()
+            latest = data if isinstance(data, list) else []
+            self.cache.set("cve_latest", latest, ttl=3600, base_url=self.base_url)
+            return latest
+        except requests.Timeout as exc:
+            logger.error("CIRCL latest CVE fetch timeout: %s", exc)
+            self.cache.set("cve_latest", [], ttl=3600, base_url=self.base_url)
+            return []
+        except requests.RequestException as exc:
+            logger.error("CIRCL latest CVE fetch error: %s", exc)
+            self.cache.set("cve_latest", [], ttl=3600, base_url=self.base_url)
             return []
 
     def get_cves_for_cms(self, cms_name, version=None):

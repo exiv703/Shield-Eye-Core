@@ -10,6 +10,7 @@ import time
 from .cve_client import CVEClient
 from .security_headers import SecurityHeadersAnalyzer
 from .config import CMS_SCAN_CONFIG, TIMEOUT_CONFIG, COMMON_SUBDOMAINS
+from .http_client import safe_request
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,7 @@ class CMSScanner:
             
             # check meta tags
             try:
-                timeout = TIMEOUT_CONFIG.get('http_request', 10)
-                response = self.session.get(url, timeout=timeout)
+                response = safe_request("GET", url, session=self.session, timeout_key="cms_scan")
                 soup = BeautifulSoup(response.text, 'html.parser')
                 generator_meta = soup.find('meta', attrs={'name': 'generator'})
                 if generator_meta and signature.get('meta') and signature['meta'].lower() in generator_meta.get('content', '').lower():
@@ -84,8 +84,7 @@ class CMSScanner:
             
             for path in signature.get('paths', []):
                 try:
-                    timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                    response = self.session.head(urljoin(url, path), timeout=timeout)
+                    response = safe_request("HEAD", urljoin(url, path), session=self.session, timeout_key="cms_scan")
                     if response.status_code < 400:
                         confidence += 1
                 except requests.RequestException:
@@ -95,8 +94,7 @@ class CMSScanner:
             
             for file in signature.get('files', []):
                 try:
-                    timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                    response = self.session.head(urljoin(url, file), timeout=timeout)
+                    response = safe_request("HEAD", urljoin(url, file), session=self.session, timeout_key="cms_scan")
                     if response.status_code < 400:
                         confidence += 1
                 except requests.RequestException:
@@ -106,8 +104,7 @@ class CMSScanner:
             
             if 'version_regex' in signature:
                 try:
-                    timeout = CMS_SCAN_CONFIG.get('version_check_timeout', 10)
-                    response = self.session.get(url, timeout=timeout)
+                    response = safe_request("GET", url, session=self.session, timeout_key="cms_scan")
                     version_match = re.search(signature['version_regex'], response.text)
                     if version_match:
                         confidence += 1
@@ -131,8 +128,7 @@ class CMSScanner:
             if wordpress_result and wordpress_result['cms'] == 'WordPress':
                 return wordpress_result
             else:
-                timeout = TIMEOUT_CONFIG.get('http_request', 10)
-                response = self.session.get(url, timeout=timeout)
+                response = safe_request("GET", url, session=self.session, timeout_key="cms_scan")
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
                 generator_meta = soup.find('meta', attrs={'name': 'generator'})
@@ -157,8 +153,7 @@ class CMSScanner:
                 if 'wp-content' in response.text:
                     readme_url = urljoin(url, 'readme.html')
                     try:
-                        timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                        readme_response = self.session.get(readme_url, timeout=timeout)
+                        readme_response = safe_request("GET", readme_url, session=self.session, timeout_key="cms_scan")
                         version_match = re.search(r'Version\s+(\d+\.\d+)', readme_response.text)
                         if version_match:
                             return {
@@ -173,8 +168,7 @@ class CMSScanner:
                     
                     version_url = urljoin(url, 'wp-includes/version.php')
                     try:
-                        timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                        version_response = self.session.get(version_url, timeout=timeout)
+                        version_response = safe_request("GET", version_url, session=self.session, timeout_key="cms_scan")
                         version_match = re.search(r'\$wp_version\s*=\s*[\'"]([^\'"]+)[\'"]', version_response.text)
                         if version_match:
                             return {
@@ -202,8 +196,7 @@ class CMSScanner:
     def detect_joomla(self, url: str) -> Optional[Dict]:
 
         try:
-            timeout = TIMEOUT_CONFIG.get('http_request', 10)
-            response = self.session.get(url, timeout=timeout)
+            response = safe_request("GET", url, session=self.session, timeout_key="cms_scan")
             soup = BeautifulSoup(response.text, 'html.parser')
             
             generator_meta = soup.find('meta', attrs={'name': 'generator'})
@@ -235,8 +228,7 @@ class CMSScanner:
             if any(indicator in response.text for indicator in joomla_indicators):
                 manifest_url = urljoin(url, 'administrator/manifests/files/joomla.xml')
                 try:
-                    timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                    manifest_response = self.session.get(manifest_url, timeout=timeout)
+                    manifest_response = safe_request("GET", manifest_url, session=self.session, timeout_key="cms_scan")
                     version_match = re.search(r'<version>([^<]+)</version>', manifest_response.text)
                     if version_match:
                         return {
@@ -299,14 +291,12 @@ class CMSScanner:
     def analyze_http_security_headers(self, url: str) -> Dict:
         try:
             try:
-                timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
-                response = self.session.head(url, allow_redirects=True, timeout=timeout)
+                response = safe_request("HEAD", url, session=self.session, timeout_key="cms_scan", allow_redirects=True)
                 if response.status_code >= 400:
                     raise requests.RequestException("HEAD request failed")
             except requests.RequestException:
                 logger.debug("HEAD request failed, using GET instead")
-                timeout = TIMEOUT_CONFIG.get('http_request', 10)
-                response = self.session.get(url, allow_redirects=True, timeout=timeout)
+                response = safe_request("GET", url, session=self.session, timeout_key="cms_scan", allow_redirects=True)
 
             analysis = self.security_headers_analyzer.analyze(response.headers)
             
@@ -421,9 +411,8 @@ class CMSScanner:
         issues = []
         
         try:
-            timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
             config_url = urljoin(url, 'wp-config.php')
-            response = self.session.get(config_url, timeout=timeout)
+            response = safe_request("GET", config_url, session=self.session, timeout_key="cms_scan")
             if response.status_code == 200:
                 issues.append({
                     'type': 'exposed_config',
@@ -436,9 +425,8 @@ class CMSScanner:
             logger.warning("Unexpected error in WordPress config check: %s", exc)
         
         try:
-            timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
             admin_url = urljoin(url, 'wp-admin/')
-            response = self.session.get(admin_url, timeout=timeout)
+            response = safe_request("GET", admin_url, session=self.session, timeout_key="cms_scan")
             if response.status_code == 200:
                 issues.append({
                     'type': 'admin_accessible',
@@ -457,9 +445,8 @@ class CMSScanner:
         issues = []
         
         try:
-            timeout = CMS_SCAN_CONFIG.get('head_timeout', 5)
             admin_url = urljoin(url, 'administrator/')
-            response = self.session.get(admin_url, timeout=timeout)
+            response = safe_request("GET", admin_url, session=self.session, timeout_key="cms_scan")
             if response.status_code == 200:
                 issues.append({
                     'type': 'admin_accessible',
@@ -476,8 +463,12 @@ class CMSScanner:
     def get_latest_wordpress_version(self) -> Optional[str]:
 
         try:
-            timeout = CMS_SCAN_CONFIG.get('version_check_timeout', 10)
-            response = self.session.get('https://api.wordpress.org/core/version-check/1.7/', timeout=timeout)
+            response = safe_request(
+                "GET",
+                'https://api.wordpress.org/core/version-check/1.7/',
+                session=self.session,
+                timeout_key="cms_scan",
+            )
             data = response.json()
             return data.get('offers', [{}])[0].get('version')
         except requests.RequestException as exc:

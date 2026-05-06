@@ -15,11 +15,7 @@
 
 ---
 
-<!-- 
-  📸 SCREENSHOT: Main application window showing the Dashboard view
-  Recommended size: 900x600px or similar widescreen ratio
-  Show: Dashboard with metrics, charts, and recent scans
--->
+
 ![ShieldEye Core Dashboard](docs/screenshots/dashboard.png)
 
 </div>
@@ -94,22 +90,19 @@ Whether you're a security researcher, penetration tester, or system administrato
 
 <div align="center">
 
-<!-- 
-  📸 SCREENSHOT: Dashboard view
-  Show: Overall security metrics, recent scans list, key statistics
--->
+
 | Dashboard | Scan Configuration |
 |:---------:|:------------------:|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Scan Config](docs/screenshots/scan-config.png) |
 | *High-level security posture and activity* | *Intuitive scan setup with multiple modes* |
 
 <!-- 
-  📸 SCREENSHOT: Results view with detailed findings
+  SCREENSHOT: Results view with detailed findings
   Show: Port scan results, risk assessment, vulnerability details
 -->
 
 <!-- 
-  📸 SCREENSHOT: History view with scan timeline
+  SCREENSHOT: History view with scan timeline
   Show: Previous scans list, trend charts, filters
 -->
 | Results | History |
