@@ -1,6 +1,7 @@
 import json
 import logging
 import random
+import re
 import time
 from collections import defaultdict
 from ipaddress import ip_address, ip_network, AddressValueError
@@ -35,29 +36,13 @@ logger = logging.getLogger(__name__)
 
 
 def validate_api_key(api_key: str, min_length: int = 32) -> None:
-    """Validate Shodan API key format.
-
-    Args:
-        api_key: Key string to validate.
-        min_length: Minimum expected length.
-
-    Raises:
-        ValidationError: If key is empty or too short.
-    """
+    """Raise ValidationError if a Shodan key is empty or too short."""
     if not api_key or len(api_key.strip()) < min_length:
         raise ValidationError(f"Invalid API key: must be at least {min_length} characters")
 
 
 def redact_secret(value: str, visible_chars: int = 4) -> str:
-    """Mask secret value for logging.
-
-    Args:
-        value: Secret string.
-        visible_chars: Number of chars to show at start.
-
-    Returns:
-        Masked string, e.g. ``abcd****************``.
-    """
+    """Mask a secret for logging, e.g. 'abcd****************'."""
     if not value:
         return ""
     if len(value) <= visible_chars:
@@ -66,15 +51,7 @@ def redact_secret(value: str, visible_chars: int = 4) -> str:
 
 
 def apply_scan_jitter(base_delay: float, jitter: float = 0.2) -> float:
-    """Apply randomized jitter to base delay for rate limiting.
-
-    Args:
-        base_delay: Base delay in seconds.
-        jitter: Max random offset (±jitter seconds).
-
-    Returns:
-        Actual delay to sleep (base_delay ± jitter).
-    """
+    # base_delay +/- jitter, so scans don't fire on an exact cadence
     return base_delay + random.uniform(-jitter, jitter)
 
 class ShieldEyeBackend:
@@ -85,11 +62,12 @@ class ShieldEyeBackend:
         report_generator: Optional[ReportGenerator] = None,
         security_config: Optional[Dict] = None,
         alert_config: Optional[Dict] = None,
+        history_store: Optional[HistoryStore] = None,
     ) -> None:
         self.port_scanner = port_scanner if port_scanner else PortScanner()
         self.cms_scanner = cms_scanner if cms_scanner else CMSScanner()
         self.report_generator = report_generator if report_generator else ReportGenerator()
-        
+
         sec_config = security_config if security_config else SECURITY_CONFIG
         alert_cfg = alert_config if alert_config else ALERT_CONFIG
         
@@ -102,6 +80,11 @@ class ShieldEyeBackend:
         self.blacklist = sec_config.get("blacklist_ips", [])
         self.require_authorization = sec_config.get("require_authorization", False)
         self.allow_private_targets = bool(sec_config.get("allow_private_targets", False))
+        # CMS/web requests follow redirects; keep them SSRF-safe under the same policy.
+        try:
+            self.cms_scanner.allow_private_redirects = self.allow_private_targets
+        except (AttributeError, TypeError):
+            pass
         self.alert_enabled = alert_cfg.get("enabled", True)
         self.alert_score_threshold = alert_cfg.get("score_threshold", 70)
         self.alert_min_level = alert_cfg.get("min_level", "HIGH").upper()
@@ -109,7 +92,7 @@ class ShieldEyeBackend:
         self._target_request_times: Dict[str, List[float]] = defaultdict(list)
         self._target_request_counts: Dict[str, int] = defaultdict(int)
 
-        self.history_store = HistoryStore()
+        self.history_store = history_store if history_store else HistoryStore()
         self.cache = TTLCache(default_ttl=3600)
         legacy_path = Path(__file__).parent / "data" / "scan_history.json"
         if legacy_path.exists():
@@ -187,37 +170,56 @@ class ShieldEyeBackend:
                 pass
         return nets
 
+    _HOSTNAME_LABEL = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
+
+    def _validate_hostname(self, hostname: str) -> None:
+        if len(hostname) > 253:
+            raise ValidationError(f"Hostname too long: {hostname}")
+        labels = hostname.split(".")
+        for label in labels:
+            if not label or not self._HOSTNAME_LABEL.match(label):
+                raise ValidationError(f"Invalid hostname: {hostname}")
+
     def _validate_target(self, target: str):
-        if not target:
-            raise ValidationError('Target cannot be empty')
-        
+        if not isinstance(target, str):
+            raise ValidationError("Target must be a non-empty string")
+        if not target.strip():
+            raise ValidationError("Target cannot be empty")
+
         target = target.strip()
-        
-        # basic sanity check
-        if any(c in target for c in ['<', '>', ';', '|']):
-            raise ValidationError(f'Invalid characters in target: {target}')
-        
+
+        # Reject shell/argument-injection metacharacters. A leading '-' or any
+        # whitespace would let a target be smuggled in as an extra nmap argument
+        # (e.g. "--script ..." / "-oN /etc/x"), so block those explicitly.
+        if target.startswith("-") or any(
+            c in target for c in ('<', '>', ';', '|', '&', '$', '`', '\\', ' ', '\t', '\n', '\r')
+        ):
+            raise ValidationError(f'Target contains invalid characters: {target}')
+
         if '/' in target:
             try:
                 network = ip_network(target, strict=False)
-                if network.num_addresses > 65536:  # /16 is max
-                    raise ValidationError(f'Network too large (max /16): {target}')
             except ValueError as e:
                 raise ValidationError(f"Invalid network CIDR notation: {target}") from e
+            if network.num_addresses > 65536:  # /16 is max
+                raise ValidationError(f'Network too large (max /16): {target}')
         else:
             try:
                 ip_address(target)
             except ValueError:
-                # probably a hostname, check length
-                if len(target) > 253:
-                    raise ValidationError(f"Hostname too long: {target}")
+                # Not an IP literal: validate as a hostname.
+                self._validate_hostname(target)
     
     def _ensure_target_allowed(self, target: str):
         if "/" not in target:
             try:
+                # A port-scan target is explicitly chosen by the operator, so
+                # private/LAN ranges are allowed here (that is the scanner's main
+                # use case). Loopback, link-local, and cloud-metadata stay blocked,
+                # and whitelist/blacklist policy below still applies.
                 validate_scan_url(
                     f"http://{target.strip()}",
-                    allow_private=self.allow_private_targets,
+                    allow_private=True,
                 )
             except ValidationError as exc:
                 raise SecurityPolicyError(str(exc)) from exc
@@ -256,36 +258,22 @@ class ShieldEyeBackend:
         port_mode: str = "common",
         custom_ports: Optional[List[int]] = None,
     ) -> List[Dict]:
-        """Run a port scan for a single host or a CIDR network.
+        """Port-scan a single host or a CIDR network.
 
-        This method validates target input, enforces policy/rate limits, selects
-        the effective port list, and orchestrates host or network scanning.
-
-        Args:
-            target: Target IP, hostname, or CIDR network.
-            scan_type: Scan scope, either ``single`` or ``network``.
-            stealth: Legacy flag controlling rate-limited scan behavior.
-            scan_mode: Scanner profile, either ``safe`` or ``aggressive``.
-            shodan_api_key: Optional API key for host enrichment.
-            port_mode: Port selection mode (common, critical, full_1k, full_64k, custom).
-            custom_ports: Optional custom port list when ``port_mode=custom``.
-
-        Returns:
-            A list of per-host scan result dictionaries.
-
-        Raises:
-            ValidationError: If target, scan mode, or port inputs are invalid.
-            SecurityPolicyError: If target violates security policy or rate limits.
+        Validates the target, enforces policy/rate limits, picks the port list,
+        then runs the host or network scan. Returns one result dict per host.
+        Raises ValidationError / SecurityPolicyError on bad or blocked input.
         """
         self._validate_target(target)
-        self._ensure_target_allowed(target)
-        
+
         if scan_type not in ('single', 'network'):
             raise ValidationError(f"Invalid scan_type: {scan_type}. Must be 'single' or 'network'")
-        
+
         if scan_mode not in ('safe', 'aggressive'):
             raise ValidationError(f"Invalid scan_mode: {scan_mode}. Must be 'safe' or 'aggressive'")
-        
+
+        self._ensure_target_allowed(target)
+
         self._sleep_rate_limit()
         self._check_per_target_rate_limit(target)
         ports = self._select_ports(port_mode, custom_ports)
@@ -302,19 +290,23 @@ class ShieldEyeBackend:
         return results
 
     def _validate_ports(self, ports):
-        if not ports or not isinstance(ports, list):
-            raise ValidationError("Invalid port list")
-        
+        if not isinstance(ports, list):
+            raise ValidationError("Ports must be a list")
+        if not ports:
+            raise ValidationError("Port list cannot be empty")
+
         valid_ports = []
         for p in ports:
-            if not isinstance(p, int) or p < 1 or p > 65535:
-                raise ValidationError(f"Invalid port: {p}")
+            if not isinstance(p, int) or isinstance(p, bool):
+                raise ValidationError(f"Port must be integer: {p!r}")
+            if p < 1 or p > 65535:
+                raise ValidationError(f"Port out of range (1-65535): {p}")
             valid_ports.append(p)
-        
+
         if len(valid_ports) > 10000:  # sanity check
             raise ValidationError(f"Too many ports: {len(valid_ports)}")
-        
-        return sorted(list(set(valid_ports)))  # dedupe and sort
+
+        return sorted(set(valid_ports))  # dedupe and sort
     
     def _select_ports(self, port_mode, custom_ports=None):
         if port_mode == "custom" and custom_ports:
@@ -373,24 +365,8 @@ class ShieldEyeBackend:
         scan_mode: str = "safe",
         web_vulns: bool = False,
     ) -> Dict:
-        """Scan a web target for CMS and optional heuristic web vulnerabilities.
-
-        The method validates URL safety, applies rate limiting, runs CMS
-        fingerprinting, and can append lightweight XSS/SQLi/path traversal checks.
-
-        Args:
-            url: Target URL to analyze.
-            stealth: Legacy flag controlling rate-limited request behavior.
-            scan_mode: Scan profile to tag in output.
-            web_vulns: Whether to run heuristic web vulnerability checks.
-
-        Returns:
-            A CMS scan result dictionary with scan metadata.
-
-        Raises:
-            ValidationError: If URL validation fails.
-            SecurityPolicyError: If per-target security throttling is exceeded.
-        """
+        """Fingerprint the CMS at a URL and, if web_vulns, run the heuristic
+        XSS/SQLi/traversal checks on top. Validates URL safety and rate-limits first."""
         self._validate_url(url)
         parsed = urlparse(url)
         target = parsed.netloc
@@ -417,23 +393,10 @@ class ShieldEyeBackend:
         return result
 
     def summarize_risk(self, port_results: List[Dict], cms_results: List[Dict]) -> Dict[str, Any]:
-        """Summarize risk using weighted findings with explainable scoring details.
+        """Roll up open ports + CMS findings into a weighted score and level.
 
-        The summary combines open-port exposure and CMS findings into a single
-        weighted score and maps it to a qualitative level. In addition to legacy
-        reason strings, it returns a machine-readable breakdown and deduplicated
-        remediation recommendations for downstream UI/CLI presentation.
-
-        Args:
-            port_results: Port scan result list produced by ``scan_ports``.
-            cms_results: CMS scan result list produced by ``scan_cms``.
-
-        Returns:
-            A dictionary containing score, level, reasons, breakdown,
-            recommendations, and aggregate metrics.
-
-        Raises:
-            ValueError: If score inputs cannot be interpreted numerically.
+        Returns score, level, human-readable reasons, a per-factor breakdown,
+        deduped recommendations, and aggregate metrics.
         """
         score = 0
         reasons = []
@@ -581,7 +544,7 @@ class ShieldEyeBackend:
         # XSS check
         xss_payload = "<script>alert(1)</script>"
         try:
-            resp = safe_request("GET", url, params={"xss": xss_payload}, timeout_key="web_vuln")
+            resp = safe_request("GET", url, params={"xss": xss_payload}, timeout_key="web_vuln", validate_redirects=True, allow_private=self.allow_private_targets)
             if resp.ok:
                 finding = analyze_xss_response(resp.text, xss_payload)
                 if finding:
@@ -591,10 +554,11 @@ class ShieldEyeBackend:
         
         # SQL injection check
         try:
-            base_resp = safe_request("GET", url, params={"id": "1"}, timeout_key="web_vuln")
-            true_resp = safe_request("GET", url, params={"id": "1' AND 1=1--"}, timeout_key="web_vuln")
-            false_resp = safe_request("GET", url, params={"id": "1' AND 1=2--"}, timeout_key="web_vuln")
-            error_resp = safe_request("GET", url, params={"id": "'"}, timeout_key="web_vuln")
+            redirect_guard = {"validate_redirects": True, "allow_private": self.allow_private_targets}
+            base_resp = safe_request("GET", url, params={"id": "1"}, timeout_key="web_vuln", **redirect_guard)
+            true_resp = safe_request("GET", url, params={"id": "1' AND 1=1--"}, timeout_key="web_vuln", **redirect_guard)
+            false_resp = safe_request("GET", url, params={"id": "1' AND 1=2--"}, timeout_key="web_vuln", **redirect_guard)
+            error_resp = safe_request("GET", url, params={"id": "'"}, timeout_key="web_vuln", **redirect_guard)
 
             finding = analyze_sqli_responses(
                 base_resp.text,
@@ -612,7 +576,7 @@ class ShieldEyeBackend:
         # directory traversal
         for payload in TRAVERSAL_PAYLOADS:
             try:
-                resp = safe_request("GET", url, params={"file": payload}, timeout_key="web_vuln")
+                resp = safe_request("GET", url, params={"file": payload}, timeout_key="web_vuln", validate_redirects=True, allow_private=self.allow_private_targets)
                 if not resp.ok:
                     continue
 
@@ -638,28 +602,9 @@ class ShieldEyeBackend:
         port_mode: str = "common",
         custom_ports: Optional[List[int]] = None,
     ) -> Dict:
-        """Run an end-to-end scan and return a consolidated result payload.
+        """Port scan, then optional CMS scan, then risk summary + alert check.
 
-        This orchestration method performs port scanning first, then optional CMS
-        scanning, computes risk summary, and evaluates alert triggering criteria.
-
-        Args:
-            target: Target IP, hostname, or CIDR network.
-            scan_type: Scan scope, either ``single`` or ``network``.
-            url: Optional web URL for CMS/vulnerability scanning.
-            scan_mode: Scanner profile, either ``safe`` or ``aggressive``.
-            stealth: Legacy flag controlling rate-limited behavior.
-            web_vulns: Whether to include heuristic web vulnerability checks.
-            shodan_api_key: Optional key for Shodan host enrichment.
-            port_mode: Port selection mode.
-            custom_ports: Optional custom port list when ``port_mode=custom``.
-
-        Returns:
-            A dictionary combining port results, CMS results, risk summary, and alert metadata.
-
-        Raises:
-            ValidationError: If target or scan parameters are invalid.
-            SecurityPolicyError: If target violates configured scan policy.
+        Returns a dict with port_results, cms_results, risk_summary, and alert.
         """
 
         port_results = self.scan_ports(
@@ -818,19 +763,8 @@ class ShieldEyeBackend:
         }
 
     def get_shodan_info(self, ip_value: str, api_key: str) -> Dict:
-        """Fetch and cache host metadata from Shodan API.
-
-        Args:
-            ip_value: Target IP address string.
-            api_key: Shodan API key.
-
-        Returns:
-            A dictionary of Shodan host attributes, or an ``error`` payload when
-            validation/request fails.
-
-        Raises:
-            Exception: Unexpected errors from JSON parsing or cache internals.
-        """
+        """Look up host metadata from Shodan (cached 24h). Returns an
+        {'error': ...} dict instead of raising on a bad key or failed request."""
         cached = self.cache.get("shodan", ttl=86400, ip=ip_value)
         if cached is not None:
             return cached

@@ -10,12 +10,7 @@ class HistoryStore:
     """Thread-safe history storage using SQLite."""
 
     def __init__(self, db_path: Optional[str] = None) -> None:
-        """Initialize history store.
-
-        Args:
-            db_path: Path to SQLite database.
-                Defaults to ``backend/data/history.db``.
-        """
+        # Defaults to backend/data/history.db.
         if db_path is None:
             db_path = str(Path(__file__).parent / "data" / "history.db")
         self.db_path = db_path
@@ -42,11 +37,6 @@ class HistoryStore:
 
     @contextmanager
     def _get_connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield a SQLite connection with lock timeout.
-
-        Yields:
-            An open SQLite connection with row access by column name.
-        """
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         try:
@@ -55,11 +45,7 @@ class HistoryStore:
             conn.close()
 
     def save_entry(self, entry: Dict[str, Any]) -> None:
-        """Atomically save a history entry.
-
-        Args:
-            entry: Entry payload with keys ``timestamp``, ``target``, and ``result``.
-        """
+        """Insert one entry (keys: timestamp, target, result)."""
         with self._get_connection() as conn:
             conn.execute(
                 "INSERT INTO scan_history (timestamp, target, result_json) VALUES (?, ?, ?)",
@@ -72,14 +58,7 @@ class HistoryStore:
             conn.commit()
 
     def load_entries(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Load history entries ordered by most recent first.
-
-        Args:
-            limit: Maximum number of entries to return. ``None`` means no limit.
-
-        Returns:
-            List of entries containing ``timestamp``, ``target``, and ``result``.
-        """
+        """Load entries, most recent first (limit=None means all)."""
         query = "SELECT timestamp, target, result_json FROM scan_history ORDER BY timestamp DESC"
         params: tuple = ()
         if limit is not None:
@@ -98,14 +77,7 @@ class HistoryStore:
             ]
 
     def import_json_legacy(self, json_path: str) -> int:
-        """Import entries from legacy JSON history.
-
-        Args:
-            json_path: Path to the legacy ``scan_history.json`` file.
-
-        Returns:
-            Number of successfully imported entries.
-        """
+        """Import entries from an old scan_history.json; returns how many landed."""
         if not os.path.exists(json_path):
             return 0
 

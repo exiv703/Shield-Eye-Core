@@ -54,7 +54,7 @@ class DashboardView(Gtk.ScrolledWindow):
         title.set_halign(Gtk.Align.START)
         title_box.append(title)
         
-        subtitle = Gtk.Label(label="Real-time network and CMS vulnerability monitoring")
+        subtitle = Gtk.Label(label="Network and CMS vulnerability scanning")
         subtitle.add_css_class("header-subtitle")
         subtitle.set_halign(Gtk.Align.START)
         title_box.append(subtitle)

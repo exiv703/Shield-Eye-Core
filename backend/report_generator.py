@@ -132,7 +132,7 @@ class ReportGenerator:
         report_info = [
             ["Generated on:", datetime.datetime.now().strftime("%d.%m.%Y %H:%M")],
             ["Tool:", "ShieldEye v1.0"],
-            ["Scan type:", "Comprehensive security audit"],
+            ["Scan type:", "Network and web security audit"],
             ["Scope:", "Port scanning + CMS analysis"]
         ]
         

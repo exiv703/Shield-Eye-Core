@@ -83,7 +83,7 @@ class ScanConfigView(Gtk.ScrolledWindow):
         self.scan_type_combo.append("network", "Network Range")
         self.scan_type_combo.append("full", "Full Scan (Ports + CMS)")
         self.scan_type_combo.set_active(0)
-        self.scan_type_combo.set_tooltip_text("Choose between scanning a single host, network range, or comprehensive scan")
+        self.scan_type_combo.set_tooltip_text("Choose between scanning a single host, a network range, or a full ports + CMS scan")
         type_box.append(self.scan_type_combo)
         panel.append(type_box)
         
@@ -134,7 +134,7 @@ class ScanConfigView(Gtk.ScrolledWindow):
         self.port_mode_combo.append("common", "Common Ports (Fast)")
         self.port_mode_combo.append("critical", "Critical Ports Only")
         self.port_mode_combo.append("full_1k", "Full 1-1024 (Thorough)")
-        self.port_mode_combo.append("full_64k", "Full 1-65535 (Comprehensive)")
+        self.port_mode_combo.append("full_64k", "Full 1-65535 (all ports)")
         self.port_mode_combo.set_tooltip_text("Select port range to scan - more ports = longer scan time")
         self.port_mode_combo.append("custom", "Custom Port List")
         self.port_mode_combo.set_active(0)

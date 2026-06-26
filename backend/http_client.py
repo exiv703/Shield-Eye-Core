@@ -1,12 +1,17 @@
 import logging
 import time
 from typing import Optional
+from urllib.parse import urljoin
 
 import requests
 
 from .config import TIMEOUT_CONFIG
+from .validators import is_safe_request_url
 
 logger = logging.getLogger(__name__)
+
+_REDIRECT_STATUS = {301, 302, 303, 307, 308}
+_MAX_REDIRECT_HOPS = 5
 
 
 def _parse_retry_after(retry_after: Optional[str]) -> Optional[float]:
@@ -28,24 +33,67 @@ def safe_request(
     session: Optional[requests.Session] = None,
     timeout_key: str = "http_request",
     max_retries: int = 3,
+    validate_redirects: bool = False,
+    allow_private: bool = False,
     **kwargs
 ) -> requests.Response:
-    """Make an HTTP request with retry, backoff, and timeout handling.
+    """HTTP request with retry/backoff and, optionally, SSRF-safe redirects.
 
-    Args:
-        method: HTTP method (GET, POST, etc.).
-        url: Target URL.
-        session: Optional requests Session to reuse connections.
-        timeout_key: Key in TIMEOUT_CONFIG for timeout value.
-        max_retries: Maximum retry attempts.
-        **kwargs: Extra arguments forwarded to requests request.
-
-    Returns:
-        requests.Response: Response object on success.
-
-    Raises:
-        requests.exceptions.RequestException: If retries are exhausted.
+    With validate_redirects=True we follow redirects by hand and re-check each
+    hop with is_safe_request_url, so a user-controlled target can't bounce us
+    into loopback/metadata/private addresses. Leave it off for trusted API hosts.
     """
+    if not validate_redirects:
+        return _request_with_retry(
+            method, url, session=session, timeout_key=timeout_key,
+            max_retries=max_retries, **kwargs,
+        )
+
+    kwargs["allow_redirects"] = False
+    current_method = method
+    current_url = url
+    for _hop in range(_MAX_REDIRECT_HOPS + 1):
+        response = _request_with_retry(
+            current_method, current_url, session=session, timeout_key=timeout_key,
+            max_retries=max_retries, **kwargs,
+        )
+        if response.status_code not in _REDIRECT_STATUS:
+            return response
+
+        location = response.headers.get("Location")
+        if not location:
+            return response
+
+        next_url = urljoin(current_url, location)
+        if not is_safe_request_url(next_url, allow_private=allow_private):
+            raise requests.exceptions.RequestException(
+                f"Blocked redirect to forbidden address: {next_url}"
+            )
+
+        # Per RFC, 303 (and legacy 301/302 from POST) downgrade to GET.
+        if response.status_code == 303 or (
+            response.status_code in (301, 302) and current_method.upper() == "POST"
+        ):
+            current_method = "GET"
+            kwargs.pop("data", None)
+            kwargs.pop("json", None)
+        current_url = next_url
+
+    raise requests.exceptions.RequestException(
+        f"Too many redirects for {method} {url}"
+    )
+
+
+def _request_with_retry(
+    method: str,
+    url: str,
+    *,
+    session: Optional[requests.Session] = None,
+    timeout_key: str = "http_request",
+    max_retries: int = 3,
+    **kwargs
+) -> requests.Response:
+    """Single request with retry + exponential backoff on transient errors."""
     retryable_exceptions = (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,

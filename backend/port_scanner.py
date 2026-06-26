@@ -11,6 +11,23 @@ from .config import PORT_SCAN_CONFIG, TIMEOUT_CONFIG
 
 logger = logging.getLogger(__name__)
 
+
+def _reject_unsafe_target(target: str) -> str:
+    """Reject targets that could be smuggled in as extra nmap arguments.
+
+    python-nmap passes the host string on the nmap command line, so a value
+    starting with ``-`` or containing whitespace could inject flags such as
+    ``--script`` or ``-oN``. Valid IPs, hostnames, and CIDR ranges never need
+    those characters.
+    """
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("Scan target must be a non-empty string")
+    cleaned = target.strip()
+    if cleaned.startswith("-") or any(c.isspace() for c in cleaned):
+        raise ValueError(f"Unsafe scan target: {target!r}")
+    return cleaned
+
+
 class PortScanner:
     def __init__(self):
         self.nm = nmap.PortScanner()
@@ -97,6 +114,7 @@ class PortScanner:
         self.suspicious_ports = {4444, 5555, 6666, 31337, 12345, 54321}
         
     def scan_single_host(self, target, ports=None, scan_mode='safe'):
+        target = _reject_unsafe_target(target)
         if ports is None:
             ports = list(self.common_ports.keys())
         
@@ -242,6 +260,7 @@ class PortScanner:
         Returns:
             List of scan results for each host in the network.
         """
+        network = _reject_unsafe_target(network)
         if ports is None:
             ports = list(self.common_ports.keys())
         if scan_mode == 'aggressive':
@@ -251,7 +270,7 @@ class PortScanner:
             timeout = PORT_SCAN_CONFIG.get('safe_timeout', 5)
             max_retries = 2
         results = []
-        
+
         try:
             self.nm.scan(hosts=network, arguments='-sn')
             active_hosts = self.nm.all_hosts()

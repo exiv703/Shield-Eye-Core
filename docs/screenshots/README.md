@@ -46,7 +46,7 @@ To complete the README documentation, add the following screenshots:
 
 ## How to Add Screenshots
 
-1. Launch the application: `python run_gui.py`
+1. Launch the application: `./run.sh` (or `python -m gtk_gui_pro.app`)
 2. Navigate to each view
 3. Take screenshots using your system's screenshot tool
 4. Save them in this directory with the exact filenames listed above

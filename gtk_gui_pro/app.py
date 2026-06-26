@@ -21,7 +21,7 @@ class ShieldEyeMainWindow(Gtk.ApplicationWindow):
         self.backend = backend
         self.current_scan_results = None
         
-        self.set_title("ShieldEye Core Professional")
+        self.set_title("ShieldEye Core")
         self.set_default_size(1700, 1111)
         self.set_decorated(False)
         self.set_resizable(True)
@@ -166,7 +166,7 @@ class ShieldEyeMainWindow(Gtk.ApplicationWindow):
         app_title.set_halign(Gtk.Align.START)
         header_box.append(app_title)
         
-        app_subtitle = Gtk.Label(label="Professional Scanner")
+        app_subtitle = Gtk.Label(label="Network Security Scanner")
         app_subtitle.add_css_class("sidebar-subtitle")
         app_subtitle.set_halign(Gtk.Align.START)
         header_box.append(app_subtitle)

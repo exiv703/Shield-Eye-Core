@@ -6,14 +6,7 @@ from .exceptions import ValidationError
 
 
 def resolve_target_ips(target: str) -> list[str]:
-    """Resolve hostname to IP addresses.
-
-    Args:
-        target: URL or hostname string.
-
-    Returns:
-        List of resolved IP address strings, or empty list if unresolvable.
-    """
+    """Resolve a hostname/URL to its IPs (empty list if it doesn't resolve)."""
     parsed = urlparse(target)
     candidate: str = parsed.hostname or target.strip()
 
@@ -42,47 +35,33 @@ def resolve_target_ips(target: str) -> list[str]:
 
 
 def is_forbidden_ip(ip_str: str, allow_private: bool = False) -> bool:
-    """Check if IP is in a forbidden range for scanning.
-
-    Args:
-        ip_str: IP address string.
-        allow_private: If True, allow RFC1918 ranges for lab environments.
-
-    Returns:
-        True if IP should be blocked, False otherwise.
-    """
+    """True if an IP shouldn't be scanned (loopback/link-local/metadata, or
+    private unless allow_private)."""
     ip_obj = ipaddress.ip_address(ip_str)
 
-    if ip_obj.is_loopback:
+    if ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast:
         return True
-
-    if ip_obj.is_link_local:
+    if ip_obj == ipaddress.ip_address("169.254.169.254"):  # cloud metadata
         return True
-
-    if ip_obj.is_multicast:
-        return True
-
-    if ip_obj == ipaddress.ip_address("169.254.169.254"):
-        return True
-
     if not allow_private and ip_obj.is_private:
         return True
-
     return False
 
 
 def validate_scan_url(url: str, allow_private: bool = False) -> None:
-    """Validate that a scan target URL does not point to forbidden IPs.
+    """Reject malformed URLs and ones whose host resolves to a forbidden IP.
 
-    Args:
-        url: Target URL to validate.
-        allow_private: If True, allow private IP ranges for lab mode.
-
-    Raises:
-        ValidationError: If URL is invalid or resolves to forbidden IP.
+    Raises ValidationError on anything we won't fetch (bad scheme, control
+    chars, missing host, or an internal/metadata address).
     """
-    if not url:
+    if not isinstance(url, str):
+        raise ValidationError("URL must be a non-empty string")
+
+    if not url.strip():
         raise ValidationError("URL cannot be empty")
+
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in url):
+        raise ValidationError("URL contains control characters")
 
     parsed = urlparse(url.strip())
 
@@ -93,11 +72,11 @@ def validate_scan_url(url: str, allow_private: bool = False) -> None:
         raise ValidationError(f"URL scheme must be http or https, got: {parsed.scheme}")
 
     if not parsed.netloc:
-        raise ValidationError(f"URL missing domain: {url}")
+        raise ValidationError(f"URL missing network location (host): {url}")
 
     hostname = parsed.hostname
     if not hostname:
-        raise ValidationError(f"URL missing domain: {url}")
+        raise ValidationError(f"URL missing network location (host): {url}")
 
     candidate_ips = resolve_target_ips(hostname)
 
@@ -106,3 +85,13 @@ def validate_scan_url(url: str, allow_private: bool = False) -> None:
             raise ValidationError(
                 f"Target resolves to forbidden IP range: {resolved_ip}"
             )
+
+
+def is_safe_request_url(url: str, allow_private: bool = False) -> bool:
+    """True if a URL is safe to fetch. Used to re-check redirect hops so a
+    target can't bounce us into loopback/metadata/private addresses."""
+    try:
+        validate_scan_url(url, allow_private=allow_private)
+    except ValidationError:
+        return False
+    return True

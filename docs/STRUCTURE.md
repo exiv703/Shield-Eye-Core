@@ -42,11 +42,9 @@ ShieldEye-Core/
 │   ├── test_port_scanner.py
 │   └── test_cms_scanner.py
 │
-├── main.py                    # Legacy Tkinter GUI
 ├── cli.py                     # Command-line interface
-├── run_gui.py                 # Fires up the GTK interface
-├── metrics.py                 # Performance metrics
-├── generate_sample_data.py    # Test data generation
+├── run.sh                     # Launcher (install / run / test)
+│                              # GUI entrypoint: python -m gtk_gui_pro.app
 │
 ├── requirements.txt           # Production dependencies
 ├── requirements-dev.txt       # Development dependencies

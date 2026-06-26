@@ -18,7 +18,7 @@ class EcosystemView(Gtk.ScrolledWindow):
         title.set_halign(Gtk.Align.START)
         main_box.append(title)
         
-        subtitle = Gtk.Label(label="Comprehensive security toolkit for modern applications")
+        subtitle = Gtk.Label(label="Open-source security tools for network, web, and code analysis")
         subtitle.add_css_class("header-subtitle")
         subtitle.set_halign(Gtk.Align.START)
         subtitle.set_margin_bottom(32)
@@ -30,9 +30,9 @@ class EcosystemView(Gtk.ScrolledWindow):
                 "name": "ShieldEye Core",
                 "icon": "🛡️",
                 "tagline": "Network Security Scanner",
-                "description": "Professional network security scanner with port scanning, CMS vulnerability detection, and security headers analysis. The foundation of the ShieldEye security toolkit.",
+                "description": "Network security scanner with port scanning, CMS vulnerability detection, and security headers analysis. The base tool of the ShieldEye set.",
                 "features": [
-                    "Advanced port scanning (Nmap)",
+                    "Port scanning (Nmap)",
                     "CMS vulnerability detection",
                     "Security headers analysis",
                     "GTK 4.0 desktop interface"
@@ -44,11 +44,11 @@ class EcosystemView(Gtk.ScrolledWindow):
                 "name": "ShieldEye SurfaceScan",
                 "icon": "🌐",
                 "tagline": "Web Application Surface Scanner",
-                "description": "Analyzes web applications for vulnerabilities using headless browser automation, intelligent dependency analysis, and AI-powered threat intelligence.",
+                "description": "Analyzes web applications for vulnerabilities using headless browser automation, dependency analysis, and CVE-based threat intelligence.",
                 "features": [
                     "Playwright browser automation",
                     "CVE/vulnerability mapping",
-                    "AI-powered insights (Ollama)",
+                    "Optional LLM insights (Ollama)",
                     "GTK3 desktop interface"
                 ],
                 "tech": "TypeScript • Node.js • Python • Docker",
@@ -57,8 +57,8 @@ class EcosystemView(Gtk.ScrolledWindow):
             {
                 "name": "ShieldEye NeuralScan",
                 "icon": "🤖",
-                "tagline": "AI-Powered Code Security Analyzer",
-                "description": "Combines traditional static analysis with cutting-edge AI technology for comprehensive code security review using local transformer models.",
+                "tagline": "Local-AI Code Security Analyzer",
+                "description": "Combines static analysis with local transformer models (StarCoder2) for code security review, running entirely on your machine.",
                 "features": [
                     "50+ security patterns",
                     "Local AI models (StarCoder2)",
@@ -71,15 +71,15 @@ class EcosystemView(Gtk.ScrolledWindow):
             {
                 "name": "ShieldEye ComplianceScan",
                 "icon": "📋",
-                "tagline": "Enterprise Compliance Scanner",
-                "description": "Security and compliance scanning platform for enterprise environments with multi-standard support and professional reporting.",
+                "tagline": "Compliance & Standards Scanner",
+                "description": "Security and compliance scanning with multi-standard support (GDPR, PCI-DSS, ISO 27001) and PDF reporting.",
                 "features": [
                     "SSL/TLS & headers analysis",
                     "GDPR, PCI-DSS, ISO 27001",
                     "CVSS v3.1 scoring",
-                    "Professional PDF reports"
+                    "PDF reports"
                 ],
-                "tech": "Python • GTK4 • Enterprise",
+                "tech": "Python • GTK4 • PDF",
                 "url": "https://github.com/exiv703/ShieldEye_ComplianceScan"
             }
         ]

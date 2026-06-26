@@ -20,29 +20,29 @@ class TestCMSScanner:
         assert 'WordPress' in self.scanner.cms_signatures
         assert 'Joomla' in self.scanner.cms_signatures
     
-    @patch('backend.cms_scanner.requests.Session.get')
-    def test_detect_wordpress_from_meta(self, mock_get):
-        
+    @patch('backend.cms_scanner.safe_request')
+    def test_detect_wordpress_from_meta(self, mock_request):
+
         mock_response = Mock()
         mock_response.text = '<meta name="generator" content="WordPress 6.4" />'
         mock_response.status_code = 200
-        mock_get.return_value = mock_response
-        
+        mock_request.return_value = mock_response
+
         result = self.scanner.detect_wordpress('http://example.com')
-        
+
         assert result is not None
         assert result['cms'] == 'WordPress'
-    
-    @patch('backend.cms_scanner.requests.Session.get')
-    def test_detect_joomla_from_meta(self, mock_get):
-        
+
+    @patch('backend.cms_scanner.safe_request')
+    def test_detect_joomla_from_meta(self, mock_request):
+
         mock_response = Mock()
         mock_response.text = '<meta name="generator" content="Joomla! 4.0" />'
         mock_response.status_code = 200
-        mock_get.return_value = mock_response
-        
+        mock_request.return_value = mock_response
+
         result = self.scanner.detect_joomla('http://example.com')
-        
+
         assert result is not None
         assert result['cms'] == 'Joomla'
     
@@ -71,13 +71,13 @@ class TestCMSScanner:
         severity = self.scanner._severity_from_cvss(None)
         assert severity == 'MEDIUM'
     
-    @patch('backend.cms_scanner.requests.Session.get')
-    def test_check_wordpress_security_exposed_config(self, mock_get):
-        
+    @patch('backend.cms_scanner.safe_request')
+    def test_check_wordpress_security_exposed_config(self, mock_request):
+
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_get.return_value = mock_response
-        
+        mock_request.return_value = mock_response
+
         issues = self.scanner.check_wordpress_security('http://example.com')
         
         assert len(issues) > 0

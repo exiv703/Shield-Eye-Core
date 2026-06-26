@@ -9,11 +9,6 @@ class TTLCache:
     """Thread-safe in-memory cache with TTL expiry."""
 
     def __init__(self, default_ttl: int = 3600):
-        """Initialize cache.
-
-        Args:
-            default_ttl: Default time-to-live in seconds (default: 1 hour).
-        """
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._locks: Dict[str, Lock] = {}
         self._global_lock = Lock()
@@ -28,16 +23,7 @@ class TTLCache:
         return hashlib.sha256(key_data.encode()).hexdigest()
 
     def get(self, prefix: str, ttl: Optional[int] = None, **kwargs: Any) -> Optional[Any]:
-        """Get cached value if not expired.
-
-        Args:
-            prefix: Cache namespace (e.g. "shodan", "cve_search").
-            ttl: Optional override for default TTL.
-            **kwargs: Parameters to include in cache key.
-
-        Returns:
-            Cached value if found and not expired, None otherwise.
-        """
+        """Return the cached value for (prefix, kwargs) if it hasn't expired."""
         key = self._make_key(prefix, **kwargs)
         effective_ttl = ttl if ttl is not None else self.default_ttl
 
@@ -51,14 +37,7 @@ class TTLCache:
             return entry["value"]
 
     def set(self, prefix: str, value: Any, ttl: Optional[int] = None, **kwargs: Any) -> None:
-        """Set cached value with TTL.
-
-        Args:
-            prefix: Cache namespace.
-            value: Value to cache (must be JSON-serializable).
-            ttl: Optional override for default TTL.
-            **kwargs: Parameters to include in cache key.
-        """
+        """Cache value under (prefix, kwargs) with a TTL."""
         key = self._make_key(prefix, **kwargs)
         effective_ttl = ttl if ttl is not None else self.default_ttl
 
@@ -71,14 +50,7 @@ class TTLCache:
             }
 
     def clear(self, prefix: Optional[str] = None) -> int:
-        """Clear cache entries.
-
-        Args:
-            prefix: If provided, clear only entries with this prefix.
-
-        Returns:
-            Number of entries cleared.
-        """
+        """Drop all entries, or only those under a given prefix. Returns the count."""
         with self._global_lock:
             if prefix is None:
                 count = len(self._cache)

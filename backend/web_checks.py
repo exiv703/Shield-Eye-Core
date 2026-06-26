@@ -10,16 +10,7 @@ def detect_reflected_xss(
     payload: str,
     max_body_bytes: int = 1048576,
 ) -> Optional[Dict[str, str]]:
-    """Detect if XSS payload is reflected in a dangerous execution context.
-
-    Args:
-        response_text: Full HTTP response body.
-        payload: XSS payload that was sent.
-        max_body_bytes: Max bytes to analyze before truncation.
-
-    Returns:
-        A finding dictionary when dangerous reflected XSS is detected, otherwise None.
-    """
+    """Detect an XSS payload reflected into a dangerous (executable) context."""
     if len(response_text) > max_body_bytes:
         response_text = response_text[:max_body_bytes]
 
@@ -65,16 +56,7 @@ def analyze_xss_response(
     payload: str,
     max_bytes: int = 1048576,
 ) -> Optional[Dict[str, str]]:
-    """Analyze reflected XSS risk from response body and payload.
-
-    Args:
-        response_text: HTTP response body already fetched by caller.
-        payload: XSS payload used in the request.
-        max_bytes: Maximum number of bytes to analyze.
-
-    Returns:
-        Finding dictionary if dangerous reflection is detected, else None.
-    """
+    """Thin wrapper over detect_reflected_xss for a fetched response body."""
     return detect_reflected_xss(response_text, payload, max_body_bytes=max_bytes)
 
 
@@ -93,14 +75,7 @@ SQL_ERROR_PATTERNS: List[str] = [
 
 
 def match_sql_error(text: str) -> Optional[str]:
-    """Check if response contains common SQL error patterns.
-
-    Args:
-        text: Response body text to analyze.
-
-    Returns:
-        Matched pattern descriptor if found, otherwise None.
-    """
+    """Return the first matching SQL-error pattern in the text, or None."""
     text_lower = text.lower()
     for pattern in SQL_ERROR_PATTERNS:
         if re.search(pattern, text_lower, re.IGNORECASE):
@@ -114,17 +89,8 @@ def compare_boolean_sqli(
     false_payload_response: requests.Response,
     similarity_threshold: float = 0.85,
 ) -> bool:
-    """Detect boolean-based SQLi by comparing response consistency.
-
-    Args:
-        base_response: Response with neutral payload.
-        true_payload_response: Response with true boolean condition.
-        false_payload_response: Response with false boolean condition.
-        similarity_threshold: Minimum overlap ratio to treat two responses as similar.
-
-    Returns:
-        True when boolean-based SQLi is likely, otherwise False.
-    """
+    """Boolean-based SQLi heuristic: the true-payload response should look like
+    the baseline while the false-payload response diverges."""
 
     def response_signature(resp: requests.Response) -> Tuple[int, int, int]:
         content_sample = resp.text[:500].encode("utf-8", errors="ignore")
@@ -167,18 +133,7 @@ def detect_sqli_from_responses(
     error_resp: Optional[requests.Response] = None,
     time_threshold: float = 2.5,
 ) -> Optional[Dict[str, str]]:
-    """Aggregate SQLi detection using error, boolean, and time signals.
-
-    Args:
-        base_resp: Baseline response with neutral input.
-        true_resp: Response with true boolean payload.
-        false_resp: Response with false boolean payload.
-        error_resp: Optional response using an error-triggering payload.
-        time_threshold: Delay threshold in seconds for anomaly detection.
-
-    Returns:
-        SQLi finding details when detected, otherwise None.
-    """
+    """Combine error-based, boolean-based, and time-based SQLi signals."""
     for resp in (base_resp, true_resp, false_resp, error_resp):
         if resp is None:
             continue
@@ -217,19 +172,7 @@ def analyze_sqli_responses(
     base_time: float = 0.0,
     false_time: float = 0.0,
 ) -> Optional[Dict[str, str]]:
-    """Analyze SQLi signals from response texts and timings.
-
-    Args:
-        base_text: Response text from neutral payload.
-        true_text: Response text from true boolean payload.
-        false_text: Response text from false boolean payload.
-        error_text: Optional response text from error payload.
-        base_time: Request duration for base response in seconds.
-        false_time: Request duration for false response in seconds.
-
-    Returns:
-        Finding dictionary if SQLi is detected, else None.
-    """
+    """SQLi detection from response texts/timings (error/boolean/time-based)."""
 
     def overlap(left: str, right: str) -> float:
         left_tokens = set(re.findall(r"\w+", left.lower()))
@@ -299,15 +242,7 @@ def analyze_traversal_response(
     response_text: str,
     max_bytes: int = 524288,
 ) -> Optional[Dict[str, str]]:
-    """Analyze whether response body indicates path traversal file disclosure.
-
-    Args:
-        response_text: HTTP response body already fetched by caller.
-        max_bytes: Maximum number of bytes to analyze before truncation.
-
-    Returns:
-        Finding dictionary when high-confidence file disclosure is detected, else None.
-    """
+    """Detect path-traversal file disclosure (passwd/win.ini signatures)."""
     if len(response_text) > max_bytes:
         response_text = response_text[:max_bytes]
 

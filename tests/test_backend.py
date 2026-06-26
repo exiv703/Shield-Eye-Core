@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend import ShieldEyeBackend
 from backend.exceptions import ValidationError, SecurityPolicyError
+from backend.history_store import HistoryStore
 
 class TestShieldEyeBackendInit:
     
@@ -291,24 +292,28 @@ class TestAlerts:
 class TestHistory:
     
     def test_save_and_load_history(self, tmp_path):
-        
-        backend = ShieldEyeBackend()
+
+        backend = ShieldEyeBackend(
+            history_store=HistoryStore(db_path=str(tmp_path / "history.db"))
+        )
         history_file = tmp_path / "test_history.json"
-        
+
         port_results = [{'target': '192.168.1.1', 'open_ports': []}]
         cms_results = []
-        
+
         backend.save_scan_to_history(port_results, cms_results, str(history_file))
         history = backend.load_history(str(history_file))
-        
+
         assert len(history) == 1
         assert 'date' in history[0]
-    
+
     def test_summarize_history_empty(self, tmp_path):
-        
-        backend = ShieldEyeBackend()
+
+        backend = ShieldEyeBackend(
+            history_store=HistoryStore(db_path=str(tmp_path / "empty.db"))
+        )
         history_file = tmp_path / "empty_history.json"
-        
+
         summary = backend.summarize_history(str(history_file))
         
         assert summary['total_scans'] == 0

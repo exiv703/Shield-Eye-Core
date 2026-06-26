@@ -2,16 +2,16 @@
 
 # 🛡️ ShieldEye Core
 
-**Professional Network Security Scanner**
+**Network Security Scanner for Linux**
 
-*Real-time port scanning • CMS vulnerability detection • Security headers analysis*
+*Port scanning • CMS vulnerability detection • Security headers analysis*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GTK](https://img.shields.io/badge/GTK-4.0-4A86CF?logo=gtk&logoColor=white)](https://www.gtk.org/)
 [![Nmap](https://img.shields.io/badge/Nmap-Powered-4682B4?logo=linux&logoColor=white)](https://nmap.org/)
 
-[Features](#-key-features) • [Quick Start](#-quick-start) • [Screenshots](#-screenshots) • [Documentation](#-documentation) • [Architecture](#-architecture)
+[Features](#-features) • [Quick Start](#-quick-start) • [Screenshots](#-screenshots) • [Documentation](#-documentation) • [Architecture](#-architecture)
 
 ---
 
@@ -24,61 +24,64 @@
 
 ## 🎯 What is ShieldEye Core?
 
-ShieldEye Core is a **comprehensive network security scanner** that identifies vulnerabilities, misconfigurations, and security risks across network infrastructure and web applications. It combines:
+ShieldEye Core is a desktop network security scanner. It wraps Nmap for port and
+service discovery, fingerprints common CMS platforms and cross-references their
+versions against the CIRCL CVE database, and grades a site's HTTP security
+headers. Results are shown in a native GTK 4 GUI (there is also a CLI).
 
-- 🔍 **Advanced port scanning** with nmap integration for service detection
-- 🌐 **CMS vulnerability detection** with real CVE database integration
-- 🔐 **Security headers analysis** with weighted scoring (0-100)
-- 🖥️ **Native GTK 4.0 desktop GUI** with professional dark theme
+It's aimed at security researchers, pentesters, and sysadmins who want a quick,
+local read on a host or a small network — not a replacement for a full
+vulnerability-management suite.
 
-Whether you're a security researcher, penetration tester, or system administrator, ShieldEye Core provides actionable insights into your network's security posture.
+> ⚠️ **Authorized use only.** Only scan systems you own or have explicit written
+> permission to test. Port scanning and vulnerability probing can be disruptive
+> and, in many jurisdictions, illegal without consent.
 
 ---
 
-## ✨ Key Features
+## ✨ Features
 
 <table>
 <tr>
 <td width="50%">
 
-### 🔍 Advanced Scanning
-- **Flexible port ranges**: Common, critical, full 1-65535, custom
-- **Service detection**: Version fingerprinting and banner grabbing
-- **OS fingerprinting**: Identify target operating systems
-- **Network scanning**: CIDR notation support (e.g., 192.168.1.0/24)
-- **Stealth modes**: Safe and aggressive scan profiles
+### 🔍 Scanning
+- **Port ranges**: common, critical, full 1-65535, or custom
+- **Service detection**: version fingerprinting via Nmap
+- **OS fingerprinting**: best-effort, when Nmap has enough signal
+- **Network scans**: CIDR notation (e.g. `192.168.1.0/24`, up to /16)
+- **Safe / aggressive** profiles with optional rate-limited "stealth" timing
 
 </td>
 <td width="50%">
 
-### 🌐 Web Security Analysis
-- **CMS detection**: WordPress, Joomla, Drupal identification
-- **CVE integration**: Real-time vulnerability data from CIRCL API
-- **Security headers**: 10 headers analyzed with quality scoring
-- **SSL/TLS analysis**: Certificate validation and security grading
-- **DNS enumeration**: Subdomain discovery and DNSSEC checks
+### 🌐 Web Analysis
+- **CMS detection**: WordPress, Joomla, Drupal, Magento, and more
+- **CVE lookup**: live data from the CIRCL CVE Search API
+- **Security headers**: 10 headers scored 0-100 with a letter grade
+- **Heuristic web checks**: reflected XSS, SQLi, and path-traversal signals
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 📊 Professional Interface
-- **Modern GTK 4.0**: Native Linux desktop application
-- **Dark theme**: Cybersecurity-focused professional design
-- **Real-time charts**: Area charts, donut charts, radial gauges
-- **Scan history**: Persistent storage with trend analysis
-- **Export reports**: JSON format with detailed findings
+### 📊 Interface
+- **GTK 4 desktop app** with a dark theme
+- **Charts**: area, donut, and radial gauges for the dashboard
+- **Scan history**: stored in a local SQLite database
+- **Reports**: JSON export and PDF (ReportLab)
 
 </td>
 <td width="50%">
 
-### 🔐 Production-Grade Security
-- **Input validation**: Injection attack prevention
-- **Rate limiting**: Per-target and global request throttling
-- **Custom exceptions**: 9 specific error types
-- **Comprehensive logging**: Structured logging with file output
-- **Test coverage**: 50+ test cases with pytest
+### 🔐 Safety & robustness
+- **SSRF-aware validation**: targets resolving to loopback, link-local, or
+  cloud-metadata addresses are rejected, and HTTP redirects are re-checked
+- **Argument-injection guard** on scan targets before they reach Nmap
+- **Rate limiting**: per-target and global request throttling
+- **Typed exception hierarchy** and structured logging
+- **149 tests** (`pytest`)
 
 </td>
 </tr>
@@ -90,25 +93,15 @@ Whether you're a security researcher, penetration tester, or system administrato
 
 <div align="center">
 
-
 | Dashboard | Scan Configuration |
 |:---------:|:------------------:|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Scan Config](docs/screenshots/scan-config.png) |
-| *High-level security posture and activity* | *Intuitive scan setup with multiple modes* |
+| *Security posture and recent activity* | *Scan setup with single / network / full modes* |
 
-<!-- 
-  SCREENSHOT: Results view with detailed findings
-  Show: Port scan results, risk assessment, vulnerability details
--->
-
-<!-- 
-  SCREENSHOT: History view with scan timeline
-  Show: Previous scans list, trend charts, filters
--->
 | Results | History |
 |:-------:|:-------:|
 | ![Results](docs/screenshots/results.png) | ![History](docs/screenshots/history.png) |
-| *Detailed findings with severity levels* | *Scan timeline and trend analysis* |
+| *Findings with severity levels* | *Scan timeline and trends* |
 
 </div>
 
@@ -116,14 +109,14 @@ Whether you're a security researcher, penetration tester, or system administrato
 
 ## 🏗️ Architecture
 
-ShieldEye Core uses a **modular backend architecture** with a native GTK frontend:
+A modular Python backend behind a native GTK frontend:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    GTK 4.0 Desktop GUI                        │
 │                  (Python 3.10+ + PyGObject)                   │
 └─────────────────────────────┬────────────────────────────────┘
-                              │ Direct Integration
+                              │ Direct calls
                               ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                   ShieldEye Core Backend                      │
@@ -163,122 +156,101 @@ ShieldEye Core uses a **modular backend architecture** with a native GTK fronten
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Python | 3.10+ | With venv support |
-| GTK | 4.0+ | Desktop environment required |
-| Nmap | Latest | System installation required |
-| Linux | Any | Arch, Ubuntu, Debian, Fedora tested |
+| Python | 3.10+ | |
+| GTK | 4.0+ | system package (not pip) |
+| PyGObject | — | system package, see below |
+| Nmap | recent | system installation |
+| Linux | — | tested on Arch, Ubuntu/Debian, Fedora |
 
-### 1. Clone and Install Dependencies
+### 1. Install system dependencies
+
+GTK and PyGObject (`gi`) are provided by your distro, **not** by pip:
+
+```bash
+# Arch
+sudo pacman -S gtk4 python-gobject nmap
+
+# Ubuntu / Debian
+sudo apt install libgtk-4-1 python3-gi python3-gi-cairo gir1.2-gtk-4.0 nmap
+
+# Fedora
+sudo dnf install gtk4 python3-gobject nmap
+```
+
+### 2. Get the code and install Python deps
+
+The easiest path is the launcher, which creates the virtualenv **with access to
+the system GTK bindings** and installs everything:
 
 ```bash
 git clone https://github.com/exiv703/ShieldEye-Core.git
 cd ShieldEye-Core
+./run.sh            # interactive menu (install / run / test)
+```
 
-# Create virtual environment
-python3 -m venv venv
+Prefer to do it by hand? The `--system-site-packages` flag is required so the
+venv can see the system `gi`/GTK modules:
+
+```bash
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
-
-# Install Python dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Install System Dependencies
+### 3. Grant Nmap capabilities (optional but recommended)
 
-**Arch Linux:**
+Some Nmap features (SYN scan, OS detection) need raw-socket privileges. Granting
+capabilities once avoids running the whole app as root:
+
 ```bash
-sudo pacman -S gtk4 python-gobject nmap
+sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip "$(command -v nmap)"
 ```
 
-**Ubuntu/Debian:**
+### 4. Launch
+
 ```bash
-sudo apt update
-sudo apt install libgtk-4-1 python3-gi nmap
+./run.sh                    # recommended
+# or, with the venv activated:
+python -m gtk_gui_pro.app
 ```
 
-**Fedora:**
-```bash
-sudo dnf install gtk4 python3-gobject nmap
-```
-
-### 3. Grant Nmap Permissions (Required)
-
-Nmap requires elevated privileges for advanced scanning features. Grant capabilities once:
+### 5. CLI mode
 
 ```bash
-# Grant network capabilities to Nmap
-sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
-```
-
-**Alternative:** Run the application with sudo (less secure):
-```bash
-sudo ./run.sh
-```
-
-### 4. Launch the GUI
-
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run GUI
-python run_gui.py
-
-# Or make executable and run directly
-chmod +x run_gui.py
-./run_gui.py
-```
-
-### 5. (Optional) Use CLI Mode
-
-```bash
-# Port scan
 python cli.py scan-ports --target 192.168.1.10 --port-mode common
-
-# CMS scan
-python cli.py scan-cms --url https://example.com --web-vulns
-
-# Full scan
-python cli.py full-scan --target 192.168.1.0/24 --url https://example.com
+python cli.py scan-cms   --url https://example.com --web-vulns
+python cli.py full-scan  --target 192.168.1.0/24  --url https://example.com
 ```
 
 ---
 
 ## 🎮 Using `run.sh`
 
-ShieldEye Core includes a convenient launcher script for managing the application:
-
 ```bash
-# Interactive menu
-./run.sh
-
-# Direct commands
-./run.sh install    # Install dependencies
-./run.sh gui        # Launch GUI
-./run.sh test       # Run tests
-./run.sh clean      # Clean cache and logs
+./run.sh            # interactive menu
+./run.sh install    # install dependencies into the venv
+./run.sh gui        # launch the GUI
+./run.sh test       # run the test suite
+./run.sh clean      # clean caches and logs
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-### Configuration
+Scan parameters, rate limits, timeouts, and alert thresholds live in
+`backend/config.py`. See [STRUCTURE.md](docs/STRUCTURE.md) for the layout.
 
-Edit `backend/config.py` to customize scan parameters, security policies, and alert thresholds. See [STRUCTURE.md](docs/STRUCTURE.md) for detailed configuration options.
-
-### Requirements
-
-Core dependencies: `python-nmap`, `requests`, `beautifulsoup4`, `PyGObject`, `cryptography`, `reportlab`. See `requirements.txt` for full list.
+Core dependencies: `python-nmap`, `requests`, `beautifulsoup4`, `cryptography`,
+`reportlab`, plus system `PyGObject`/GTK. Full list in `requirements.txt`.
 
 ---
 
 ## 📖 Documentation
 
-Comprehensive documentation is available in the `docs/` directory:
-
-- **[README_GUI.md](docs/README_GUI.md)** - Detailed GUI usage guide
-- **[STRUCTURE.md](docs/STRUCTURE.md)** - Project architecture and organization
-- **[FINAL_STATUS.md](docs/FINAL_STATUS.md)** - Production-grade features overview
+- **[STRUCTURE.md](docs/STRUCTURE.md)** — project layout and modules
+- **[INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** — using the backend from your own code
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common setup and runtime issues
 
 ---
 
@@ -290,23 +262,13 @@ from backend import ShieldEyeBackend
 backend = ShieldEyeBackend()
 
 # Port scan
-results = backend.scan_ports(
-    target="192.168.1.10",
-    port_mode="common",
-    scan_mode="safe"
-)
+results = backend.scan_ports(target="192.168.1.10", port_mode="common", scan_mode="safe")
 
 # CMS scan with CVE lookup
-cms_result = backend.scan_cms(
-    url="https://example.com",
-    web_vulns=True
-)
+cms_result = backend.scan_cms(url="https://example.com", web_vulns=True)
 
-# Full scan (port + CMS)
-full_result = backend.full_scan(
-    target="192.168.1.10",
-    url="https://example.com"
-)
+# Combined port + CMS scan
+full_result = backend.full_scan(target="192.168.1.10", url="https://example.com")
 ```
 
 ---
@@ -314,15 +276,13 @@ full_result = backend.full_scan(
 ## 🛠️ Development
 
 ```bash
-# Clone and setup
 git clone https://github.com/exiv703/ShieldEye-Core.git
 cd ShieldEye-Core
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
-# Run tests
 pytest
 pytest --cov=backend --cov-report=html
 ```
@@ -331,26 +291,21 @@ pytest --cov=backend --cov-report=html
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please follow these guidelines:
+Contributions are welcome.
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a branch (`git checkout -b my-change`)
+3. Commit your changes
+4. Push and open a Pull Request
 
-### Code Style
-
-- Follow PEP 8 guidelines
-- Use type hints where appropriate
-- Add tests for new features
-- Update documentation
+Please keep to PEP 8, add type hints where they help, and cover new behavior
+with tests.
 
 ---
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 **For educational and authorized security testing only.**
 
@@ -358,29 +313,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- **Nmap** - Network scanning engine
-- **CIRCL** - CVE database API
-- **GTK Project** - GUI framework
-- **Python Community** - Amazing libraries and tools
+- **Nmap** — network scanning engine
+- **CIRCL** — CVE database API
+- **GTK Project** — GUI toolkit
+- The Python ecosystem this is built on
 
 ---
 
 ## 🔗 Related Projects
 
-Part of the **ShieldEye Security Toolkit** series:
+Part of the **ShieldEye** set of tools:
 
-- **[ShieldEye SurfaceScan](https://github.com/exiv703/ShieldEye-SurfaceScan)** - Web application surface scanner
-- **ShieldEye ComplianceScan** - Compliance and standards checker
-- **ShieldEye NeuralScan** - ML-powered threat detection
+- **[ShieldEye SurfaceScan](https://github.com/exiv703/ShieldEye-SurfaceScan)** — web application surface scanner
+- **ShieldEye NeuralScan** — local-AI code security analyzer
+- **ShieldEye ComplianceScan** — compliance and standards scanner
 
 ---
 
 <div align="center">
 
-**Built with ❤️ for the security community**
-
-*Version 2.0.0 - Production Grade*
-
-[Report Bug](https://github.com/exiv703/ShieldEye-Core/issues) • [Request Feature](https://github.com/exiv703/ShieldEye-Core/issues)
+[Report a Bug](https://github.com/exiv703/ShieldEye-Core/issues) • [Request a Feature](https://github.com/exiv703/ShieldEye-Core/issues)
 
 </div>

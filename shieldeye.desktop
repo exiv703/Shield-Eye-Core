@@ -2,8 +2,8 @@
 Version=1.0
 Type=Application
 Name=ShieldEye Core
-Comment=Professional Network Security Scanner with GTK 4.0 Interface
-Exec=/path/to/ShieldEye-Core/venv/bin/python /path/to/ShieldEye-Core/run_gui.py
+Comment=Network security scanner with a GTK 4 interface
+Exec=/path/to/ShieldEye-Core/venv/bin/python -m gtk_gui_pro.app
 Icon=security-high
 Terminal=false
 Categories=Security;Network;GTK;
