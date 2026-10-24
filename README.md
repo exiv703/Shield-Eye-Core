@@ -111,26 +111,26 @@ vulnerability-management suite.
 
 A modular Python backend behind a native GTK frontend:
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
-│                    GTK 4.0 Desktop GUI                        │
-│                  (Python 3.10+ + PyGObject)                   │
+│                    GTK 4.0 Desktop GUI                       │
+│                  (Python 3.10+ + PyGObject)                  │
 └─────────────────────────────┬────────────────────────────────┘
                               │ Direct calls
                               ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                   ShieldEye Core Backend                      │
-│              Orchestration • Validation • History             │
+│                   ShieldEye Core Backend                     │
+│              Orchestration • Validation • History            │
 └───────┬─────────────────────┬─────────────────────┬──────────┘
         │                     │                     │
         ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│ Port Scanner  │    │  CMS Scanner  │    │ SSL/DNS Scan  │
-│    (Nmap)     │    │  (CVE Check)  │    │ (Certificate) │
-└───────────────┘    └───────────────┘    └───────────────┘
+┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+│ Port Scanner  │     │  CMS Scanner  │     │ SSL/DNS Scan  │
+│    (Nmap)     │     │  (CVE Check)  │     │ (Certificate) │
+└───────────────┘     └───────────────┘     └───────────────┘
         │                     │                     │
-        └──────────┬──────────┴─────────────────────┘
-                   ▼
+        └────────────┬────────┴─────────────────────┘
+                     ▼
     ┌─────────────────────────────────┐
     │   CIRCL CVE API  •  Nmap Engine │
     │   (External)       (System)     │
