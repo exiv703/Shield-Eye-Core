@@ -6,15 +6,16 @@
 
 *Port scanning • CMS vulnerability detection • Security headers analysis*
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-1F6FEB?style=for-the-badge&labelColor=22272E)](https://opensource.org/licenses/MIT)
+[![CI](https://img.shields.io/github/actions/workflow/status/exiv703/Shield-Eye-Core/ci.yml?branch=main&label=CI&logo=github&logoColor=white&style=for-the-badge&labelColor=22272E)](https://github.com/exiv703/Shield-Eye-Core/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/exiv703/Shield-Eye-Core?display_name=tag&label=Release&color=1F6FEB&style=for-the-badge&labelColor=22272E)](https://github.com/exiv703/Shield-Eye-Core/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-1F6FEB?style=for-the-badge&labelColor=22272E)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10+-1F6FEB?logo=python&logoColor=white&style=for-the-badge&labelColor=22272E)](https://www.python.org/)
 [![GTK](https://img.shields.io/badge/GTK-4.0-1F6FEB?logo=gtk&logoColor=white&style=for-the-badge&labelColor=22272E)](https://www.gtk.org/)
 [![Nmap](https://img.shields.io/badge/Nmap-Powered-1F6FEB?logo=linux&logoColor=white&style=for-the-badge&labelColor=22272E)](https://nmap.org/)
 
-[Features](#features) • [Quick Start](#quick-start) • [Screenshots](#screenshots) • [Documentation](#documentation) • [Architecture](#architecture)
+[Features](#features) • [Screenshots](#screenshots) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Configuration](#configuration) • [Development](#development)
 
 ---
-
 
 ![ShieldEye Core Dashboard](docs/screenshots/dashboard.png)
 
@@ -335,6 +336,6 @@ Part of the **ShieldEye** set of tools:
 
 <div align="center">
 
-[Report a Bug](https://github.com/exiv703/ShieldEye-Core/issues) • [Request a Feature](https://github.com/exiv703/ShieldEye-Core/issues)
+[Report a Bug](https://github.com/exiv703/Shield-Eye-Core/issues) • [Request a Feature](https://github.com/exiv703/Shield-Eye-Core/issues)
 
 </div>
