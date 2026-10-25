@@ -5,6 +5,7 @@ import sys
 import os
 import threading
 import json
+import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -14,6 +15,8 @@ from gtk_gui_pro.views.scan_config import ScanConfigView
 from gtk_gui_pro.views.results import ResultsView
 from gtk_gui_pro.views.history import HistoryView
 from gtk_gui_pro.views.ecosystem import EcosystemView
+
+logger = logging.getLogger(__name__)
 
 class ShieldEyeMainWindow(Gtk.ApplicationWindow):
     def __init__(self, app, backend):

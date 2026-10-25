@@ -1,0 +1,12 @@
+[flake8]
+# CI gates on real errors only: syntax errors and undefined names.
+# Style checks (line length, whitespace, unused imports) are not enforced yet.
+select = E9,F63,F7,F82
+exclude =
+    .git,
+    __pycache__,
+    venv,
+    .venv,
+    build,
+    dist,
+    ShieldEye Core Legacy

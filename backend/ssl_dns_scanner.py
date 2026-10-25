@@ -1,3 +1,4 @@
+import logging
 import ssl
 import socket
 import dns.resolver
@@ -13,6 +14,8 @@ import subprocess
 import re
 
 from .config import TIMEOUT_CONFIG
+
+logger = logging.getLogger(__name__)
 
 class SSLDNSScanner:
     def __init__(self):

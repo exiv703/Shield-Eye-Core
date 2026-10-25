@@ -15,7 +15,10 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from typing import Dict, List
 import datetime
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 class ReportGenerator:
     def __init__(self):

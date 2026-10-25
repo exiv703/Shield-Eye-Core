@@ -3,11 +3,14 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 import sys
 import os
+import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from gtk_gui_pro.widgets.metric_card import MetricCard
 from gtk_gui_pro.widgets.chart_panel import ChartPanel
 from gtk_gui_pro.widgets.status_indicator import StatusIndicator, RiskBadge
+
+logger = logging.getLogger(__name__)
 
 class DashboardView(Gtk.ScrolledWindow):
     def __init__(self, backend):
