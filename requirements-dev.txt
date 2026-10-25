@@ -12,4 +12,4 @@ flake8>=6.1.0
 mypy>=1.5.0
 
 # Type stubs
-types-requests>=2.31.0
+types-requests>=2.33.0.20261006
